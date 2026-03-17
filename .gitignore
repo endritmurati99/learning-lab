@@ -1,0 +1,31 @@
+# Environment
+.env
+.env.local
+
+# Claude Code local overrides
+.claude/settings.local.json
+
+# Working data (ephemeral — The Vault is the persistent store)
+sources/*
+workspace/*
+projects/*
+!sources/.gitkeep
+!workspace/.gitkeep
+!projects/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temp
+tmp/
+.tmp/
+*.log
