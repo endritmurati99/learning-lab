@@ -56,6 +56,7 @@ Build the project in `projects/{slug}/`:
   - How to run it
   - What was simplified vs. the original
   - Link back to `workspace/{slug}/` for the full learning package
+- **Every rebuild MUST include a `tests/` directory with at least 3 functional tests** (Pytest for Python, Jest for JS/TS). Tests should cover the core success metric, one happy path, and one edge case.
 - Keep it minimal and runnable
 - MVP first — no over-engineering
 

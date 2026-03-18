@@ -10,7 +10,7 @@ Exports a completed learning package from `workspace/{slug}/` to The Vault as a 
 ## Prerequisites
 
 - A completed learning package in `workspace/{slug}/` (created by `learn-source`)
-- The Vault must exist at `c:/Users/endri/Desktop/Claude-Projects/The Vault/`
+- The Vault must exist at the path configured in `.claude/settings.json` → `vault_path`
 
 ## Inputs (ask user if missing)
 
@@ -21,15 +21,19 @@ Exports a completed learning package from `workspace/{slug}/` to The Vault as a 
 
 ## Execution Steps
 
-### Step 1 — Verify prerequisites
+### Step 1 — Resolve Vault path and verify prerequisites
+
+Read `vault_path` from `.claude/settings.json`. If not set, fall back to `c:/Users/endri/Desktop/Claude-Projects/The Vault/`.
 
 Check that `workspace/{slug}/` exists with at least `00_zusammenfassung.md`. If not, tell the user to run `learn-source` first.
 
-Check that The Vault exists at `c:/Users/endri/Desktop/Claude-Projects/The Vault/`.
+Check that The Vault exists at the resolved `{vault_path}`.
 
-### Step 2 — Read current Vault conventions
+### Step 2 — Check Vault & Conventions
 
-Read `c:/Users/endri/Desktop/Claude-Projects/The Vault/CLAUDE.md` to confirm current conventions are still in effect. Also read `docs/vault-format-reference.md` in this project for the note template.
+Use the `qmd search "{topic}"` command to semantically check if a note on this exact topic already exists.
+
+Read `{vault_path}/CLAUDE.md` to confirm current conventions are still in effect. Also read `docs/vault-format-reference.md` in this project for the note template.
 
 ### Step 3 — Read workspace files
 
@@ -41,6 +45,7 @@ Read all files in `workspace/{slug}/`:
 - `04_projekt_rebuild.md` (if exists)
 - `05_offene_fragen.md`
 - `06_notebooklm_artefakte.md` (if exists)
+- `07_logik_check.md` (if exists)
 
 Also read `sources/{slug}/metadata.tsv` or similar for source metadata.
 
@@ -53,24 +58,30 @@ Convert German workspace content into a single English research note. The note m
 | Workspace File | Vault Section |
 |----------------|---------------|
 | `00_zusammenfassung.md` | **Core Thesis** (1-2 paragraph synthesis) + **Executive Summary** (longer narrative) |
-| `01_kernkonzepte.md` | **Key Takeaways** (bullet points with `[[wiki-links]]`) + **High-Signal Concepts To Revisit** (each concept as `[[wiki-link]]`) |
+| `01_kernkonzepte.md` | **Key Takeaways** (bullet points with `[[wiki-links]]`) + **High-Signal Concepts To Revisit** (each concept as `[[wiki-link]]`). *Note: Utilize the `obsidian-markdown` skill to generate appropriate callouts for important concepts.* |
 | `02_schritt_fuer_schritt.md` | Folded into **Executive Summary** if relevant, otherwise omitted |
 | `03_uebungen.md` | **Not exported** — stays in workspace only |
 | `04_projekt_rebuild.md` | **Practical Implications For My Workflow** (if exists) |
 | `05_offene_fragen.md` | **Open Questions** |
 | `06_notebooklm_artefakte.md` | Referenced in **Source Notes** section |
+| `07_logik_check.md` | Folded into **Open Questions** or a **Critical Analysis** subsection |
 
 ### Step 5 — Generate the research note
 
-Write the note to `c:/Users/endri/Desktop/Claude-Projects/The Vault/research/{Note-Title}.md` using this exact structure:
+Write the note to `{vault_path}/research/{Note-Title}.md` using this exact structure:
 
 ```markdown
-# {Title}
+---
+research_date: {YYYY-MM-DD}
+source_url: "{URL or path}"
+source_label: "{Source Label}"
+tags:
+  - research
+  - {topic-tag}
+transcript: "[[research/assets/{slug}-transcript.txt]]"
+---
 
-> Research generated: {YYYY-MM-DD}
-> Source: [{Source Label}]({URL or path})
-> {Additional metadata: publish date, views, etc.}
-> Transcript: [[reserch/assets/{slug}-transcript.txt]]
+# {Title}
 
 ## Core Thesis
 
@@ -94,7 +105,7 @@ Write the note to `c:/Users/endri/Desktop/Claude-Projects/The Vault/research/{No
 
 ## Open Questions
 
-{From 05_offene_fragen}
+{From 05_offene_fragen + critical analysis from 07_logik_check if exists}
 
 ## Source Notes
 
@@ -103,23 +114,37 @@ Write the note to `c:/Users/endri/Desktop/Claude-Projects/The Vault/research/{No
 ```
 
 **Critical format rules:**
-- **NO YAML frontmatter** — use inline `>` header blocks
+- **YAML Properties (frontmatter)** for metadata — `research_date`, `source_url`, `source_label`, `tags`, `transcript`
 - **Wiki-link syntax** `[[...]]` for all internal concept references
-- **Asset paths in wiki-links:** use `[[reserch/assets/...]]` (intentional spelling)
-- **Asset paths on disk:** write to `research/assets/` (correct spelling)
+- **Asset paths in wiki-links:** use `[[research/assets/...]]`
+- **Asset paths on disk:** write to `research/assets/`
 - **Language:** English
 - **Tone:** analytical, first-person, practical-implications-focused
 
-### Step 6 — Copy assets
+### Step 6 — Verify backlinks against existing Vault notes
+
+Instead of manually scanning directories, use semantic vector search via `qmd`.
+
+**Critical Backlink Strategy:**
+Cross-reference every concept from `workspace/{slug}/01_kernkonzepte.md` against The Vault using:
+`qmd search "{Concept}"`
+
+Since `qmd` is semantic, it natively understands synonyms and variations, solving the duplicate-note problem. Append limits if necessary or let QMD return its top semantic matches.
+
+**If the concept already has its own note in The Vault, it MUST be wiki-linked as `[[Existing-Note-Title]]` in the research note.** Do not create orphan references when a linkable target exists.
+
+Log any new concepts that do not yet have Vault notes — these are candidates for future standalone notes.
+
+### Step 7 — Copy assets
 
 Copy source assets to The Vault:
 
-- Transcript: `sources/{slug}/*.txt` → `The Vault/research/assets/{slug}-transcript.txt`
-- NLM deliverables: `sources/{slug}/nlm-*` → `The Vault/research/assets/{slug}-{type}.{ext}`
+- Transcript: `sources/{slug}/*.txt` → `{vault_path}/research/assets/{slug}-transcript.txt`
+- NLM deliverables: `sources/{slug}/nlm-*` → `{vault_path}/research/assets/{slug}-{type}.{ext}`
 
-### Step 7 — Update daily note
+### Step 8 — Update daily note
 
-Check if `c:/Users/endri/Desktop/Claude-Projects/The Vault/daily-notes/{YYYY-MM-DD}.md` exists.
+Check if `{vault_path}/daily-notes/{YYYY-MM-DD}.md` exists.
 
 **If it exists:** Append under the `## Research` section:
 
@@ -138,7 +163,7 @@ Check if `c:/Users/endri/Desktop/Claude-Projects/The Vault/daily-notes/{YYYY-MM-
 - Main insight: {one-sentence summary of the core thesis}
 ```
 
-### Step 8 — Confirm and ask before writing
+### Step 9 — Confirm and ask before writing
 
 **Important:** Before writing any files to The Vault, show the user:
 1. The research note content (or a summary)
@@ -147,13 +172,13 @@ Check if `c:/Users/endri/Desktop/Claude-Projects/The Vault/daily-notes/{YYYY-MM-
 
 Ask for explicit confirmation before proceeding.
 
-### Step 9 — Report completion
+### Step 10 — Report completion
 
 ```
 SAVE-TO-VAULT COMPLETE
-Research note: The Vault/research/{Note-Title}.md
+Research note: {vault_path}/research/{Note-Title}.md
 Assets copied: {list of files}
-Daily note updated: The Vault/daily-notes/{YYYY-MM-DD}.md
+Daily note updated: {vault_path}/daily-notes/{YYYY-MM-DD}.md
 
 Open Obsidian to verify [[wiki-links]] and graph view.
 
@@ -167,7 +192,7 @@ Shall I clean these up?
 
 | Problem | Fix |
 |---------|-----|
-| Vault not found | Verify path: `c:/Users/endri/Desktop/Claude-Projects/The Vault/` |
-| research/ folder missing | Create it: `mkdir -p "The Vault/research/assets/"` |
+| Vault not found | Verify `vault_path` in `.claude/settings.json` |
+| research/ folder missing | Create it: `mkdir -p "{vault_path}/research/assets/"` |
 | Daily note format mismatch | Re-read The Vault's CLAUDE.md for current conventions |
 | Wiki-links not resolving in Obsidian | Ensure `[[Note-Title]]` matches the exact filename without `.md` |

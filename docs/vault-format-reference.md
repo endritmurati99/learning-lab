@@ -4,7 +4,8 @@ Quick reference for the `save-to-vault` skill. Extracted from The Vault's CLAUDE
 
 ## Vault Path
 
-`c:/Users/endri/Desktop/Claude-Projects/The Vault/`
+Configured in `.claude/settings.json` → `vault_path`.
+Default: `c:/Users/endri/Desktop/Claude-Projects/The Vault/`
 
 ## Folder Structure
 
@@ -12,22 +13,25 @@ Quick reference for the `save-to-vault` skill. Extracted from The Vault's CLAUDE
 The Vault/
 ├── daily-notes/        # One file per day: YYYY-MM-DD.md
 ├── projects/           # Project-scoped notes
-├── research/           # Research notes (disk path is "research/")
+├── research/           # Research notes
 │   └── assets/         # Transcripts, NLM deliverables, source files
 └── .obsidian/          # Do not edit
 ```
 
-**Important:** The disk folder is `research/` but wiki-links inside notes use `[[reserch/assets/...]]` (intentional misspelling preserved for consistency).
-
 ## Research Note Template
 
 ```md
-# {Title}
+---
+research_date: YYYY-MM-DD
+source_url: "https://example.com"
+source_label: "Source Label"
+tags:
+  - research
+  - topic-tag
+transcript: "[[research/assets/{slug}-transcript.txt]]"
+---
 
-> Research generated: {YYYY-MM-DD}
-> Source: [{Source Label}]({URL or path})
-> {Additional metadata as needed}
-> Transcript: [[reserch/assets/{slug}-transcript.txt]]
+# {Title}
 
 ## Core Thesis
 
@@ -72,11 +76,11 @@ If the daily note already exists, append under the existing `## Research` sectio
 
 ## Format Rules
 
-- **No YAML frontmatter** — use inline `>` header blocks
+- **YAML Properties (frontmatter)** for metadata — `research_date`, `source_url`, `source_label`, `tags`, `transcript`
 - **Wiki-link syntax** `[[...]]` for all internal references
 - **Tone:** analytical, first-person, practical-implications-focused
 - **Language:** English
-- **Asset paths in wiki-links:** use `[[reserch/assets/...]]`
+- **Asset paths in wiki-links:** use `[[research/assets/...]]`
 - **Asset paths on disk:** write to `research/assets/`
 
 ## Reference Note

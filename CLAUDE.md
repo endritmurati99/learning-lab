@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Purpose
 
-A skill-based learning pipeline for Claude Code. Take any source (YouTube video, web page, PDF, local file) and produce a structured 7-file learning package in German, with final polished notes exported to The Vault (Obsidian).
+A skill-based learning pipeline for Claude Code. Take any source (YouTube video, web page, PDF, local file) and produce a structured 8-file learning package in German, with final polished notes exported to The Vault (Obsidian).
 
 **Core principle:** Im Projekt wird gearbeitet. Im Vault wird Wissen gespeichert. (Work in the project. Store knowledge in The Vault.)
 
@@ -12,17 +12,25 @@ A skill-based learning pipeline for Claude Code. Take any source (YouTube video,
 
 ## Architecture Overview
 
-### Three-Skill Pipeline
+### Five-Skill Pipeline
 
-1. **`learn-source`** — Detect source type → ingest via yt-dlp/defuddle/Read tool → send to NotebookLM → structure output into 7-file learning package in `workspace/{slug}/`
+0. **`lab-master`** — Master orchestrator that natively chains the entire pipeline (`learn-source` → `fill-gaps` → `rebuild-project` → `save-to-vault`) across a single source in one command.
+1. **`learn-source`** — Detect source type → ingest via yt-dlp/defuddle/Read tool → send to NotebookLM → structure output into 8-file learning package in `workspace/{slug}/`. Supports multi-source: adding new sources to an existing slug's NLM notebook.
 2. **`rebuild-project`** — Take a tutorial source and create a minimal MVP project in `projects/{slug}/`
-3. **`save-to-vault`** — Transform German workspace files into English research note and copy to The Vault (`The Vault/research/{Note-Title}.md`), plus append daily note
+3. **`fill-gaps`** — Read open questions from `05_offene_fragen.md` → web search → integrate answers back into workspace with source attribution
+4. **`save-to-vault`** — Transform German workspace files into English research note with YAML Properties and copy to The Vault (`{vault_path}/research/{Note-Title}.md`), plus append daily note
 
 ### Key Separation
 
 - **Workspace** (`sources/`, `workspace/`, `projects/`) — German, working drafts, gitignored ephemeral files
 - **The Vault** (`The Vault/research/`, `The Vault/daily-notes/`) — English, final polished output, separate Obsidian vault (not tracked in this repo)
-- **The Vault path:** `c:/Users/endri/Desktop/Claude-Projects/The Vault/`
+- **The Vault path:** Configured in `.claude/settings.json` → `vault_path` (default: `c:/Users/endri/Desktop/Claude-Projects/The Vault/`)
+
+### Token Efficiency Tools
+
+- **`rtk`**: Proxy for file reading (`rtk read`) that strips boilerplate and compresses tokens by ~80-90%.
+- **`buzz`**: Local, offline Whisper transcription CLI that replaces costly LLM-based web transcription at zero token and zero API cost.
+- **`obsidian-cli`**: Global skill used to semantically search the Vault (`obsidian search` and `obsidian backlinks`) without dumping mass file context into Claude.
 
 ---
 
@@ -54,7 +62,7 @@ A skill-based learning pipeline for Claude Code. Take any source (YouTube video,
 
 ---
 
-## 7-File Learning Package Format
+## 8-File Learning Package Format
 
 Each `workspace/{slug}/` contains:
 
@@ -67,6 +75,7 @@ Each `workspace/{slug}/` contains:
 | `04_projekt_rebuild.md` | Rebuild blueprint (only for tutorials) | German |
 | `05_offene_fragen.md` | Open questions, gaps, uncertainties | German |
 | `06_notebooklm_artefakte.md` | File paths to NLM outputs + notebook metadata | German |
+| `07_logik_check.md` | Bias analysis, missing counter-arguments | German |
 
 ---
 
@@ -76,14 +85,20 @@ When exporting via `save-to-vault`:
 
 ### Research Note
 
-- Location: `The Vault/research/{Note-Title}.md`
-- **No YAML frontmatter** — use inline header blocks (`> Research generated:`, `> Source:`)
+- Location: `{vault_path}/research/{Note-Title}.md`
+- **YAML Properties (frontmatter)** for metadata — `research_date`, `source_url`, `source_label`, `tags`, `transcript`
 - Language: English
 - Structure:
   ```md
+  ---
+  research_date: YYYY-MM-DD
+  source_url: "https://..."
+  source_label: "Label"
+  tags: [research, topic]
+  transcript: "[[research/assets/{slug}-transcript.txt]]"
+  ---
+
   # {Title}
-  > Research generated: YYYY-MM-DD
-  > Source: [Label](URL)
 
   ## Core Thesis
   ## Key Takeaways
@@ -98,13 +113,13 @@ When exporting via `save-to-vault`:
 
 ### Assets
 
-- Transcripts: `The Vault/research/assets/{slug}-transcript.txt`
-- NLM outputs: `The Vault/research/assets/{slug}-{type}.{ext}`
-- **Important:** Wiki-link references use intentional misspelling: `[[reserch/assets/...]]` (not `research`)
+- Transcripts: `{vault_path}/research/assets/{slug}-transcript.txt`
+- NLM outputs: `{vault_path}/research/assets/{slug}-{type}.{ext}`
+- Wiki-link references: `[[research/assets/...]]`
 
 ### Daily Note
 
-- Location: `The Vault/daily-notes/{YYYY-MM-DD}.md`
+- Location: `{vault_path}/daily-notes/{YYYY-MM-DD}.md`
 - Append new entries under `## Research` section
 
 ---
@@ -140,7 +155,19 @@ User provides URL or file → trigger `learn-source`
 → Extract transcript / markdown
 → Create NLM notebook
 → Add source + generate deliverable
-→ Structure into 7-file package
+→ Structure into 8-file package (incl. adversarial logic check)
+→ Report completion
+```
+
+### Fill Knowledge Gaps
+
+```
+User: "fill gaps {slug}" or "fülle Lücken"
+→ Read 05_offene_fragen.md
+→ Prioritize questions by researchability
+→ Web search per question
+→ Integrate answers into 01_kernkonzepte.md (marked "Extern recherchiert")
+→ Move answered questions to "Gelöst" section
 → Report completion
 ```
 
@@ -148,10 +175,12 @@ User provides URL or file → trigger `learn-source`
 
 ```
 User: "save to vault {slug}"
+→ Read vault_path from settings.json
 → Read workspace files
 → Check Vault conventions (CLAUDE.md)
 → Transform German → English
-→ Create research note with inline headers
+→ Create research note with YAML Properties
+→ Verify backlinks against existing Vault notes
 → Copy assets to research/assets/
 → Update daily note
 → Ask for confirmation before writing

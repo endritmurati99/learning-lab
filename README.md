@@ -15,10 +15,12 @@ Source (YouTube / web / PDF / text)
   [learn-source]
         │  1. Detect & ingest (yt-dlp / defuddle / Read)
         │  2. Send to NotebookLM (create → add source → generate)
-        │  3. Structure output into 7-file learning package
+        │  3. Structure output into 8-file learning package
+        │  4. Run adversarial logic check
         ▼
   workspace/{slug}/          ← German, working drafts
         │
+        ├── [fill-gaps]        →  Research answers for open questions
         ├── [rebuild-project]  →  projects/{slug}/    (optional, tutorials only)
         │
         └── [save-to-vault]    →  The Vault/research/{Note}.md  (English, final)
@@ -30,13 +32,15 @@ Source (YouTube / web / PDF / text)
 
 | Skill | Trigger | What it does |
 |-------|---------|--------------|
-| `learn-source` | URL or file path | Ingest → NLM analysis → 7-file learning package |
+| `lab-master` | "lab run", "full pipeline" | Master skill that chains all skills together automatically |
+| `learn-source` | URL or file path | Ingest → NLM analysis → 8-file learning package |
+| `fill-gaps` | "fill gaps", "fülle Lücken" | Web search for open questions → integrate answers |
 | `rebuild-project` | "rebuild", "baue nach" | Build a minimal MVP from a tutorial source |
 | `save-to-vault` | "save to vault", "speichere im Vault" | Export to Obsidian vault in the correct format |
 
 ---
 
-## Learning Package (7 files, German)
+## Learning Package (8 files, German)
 
 Each source produces a `workspace/{slug}/` folder:
 
@@ -49,6 +53,7 @@ Each source produces a `workspace/{slug}/` folder:
 | `04_projekt_rebuild.md` | Rebuild blueprint (tutorial sources only) |
 | `05_offene_fragen.md` | Open questions and gaps |
 | `06_notebooklm_artefakte.md` | NLM deliverable paths and notebook info |
+| `07_logik_check.md` | Bias analysis, missing counter-arguments |
 
 ---
 
@@ -69,6 +74,10 @@ Each source produces a `workspace/{slug}/` folder:
 pip install yt-dlp notebooklm
 npm install -g defuddle
 notebooklm login   # browser OAuth — run once in a separate terminal
+
+# Token-efficiency tools:
+cargo install --git https://github.com/rtk-ai/rtk  # or download rtk binary
+winget install Buzz  # offline whisper transcription
 ```
 
 ---
@@ -78,15 +87,16 @@ notebooklm login   # browser OAuth — run once in a separate terminal
 ```
 learning-lab/
 ├── .claude/
-│   ├── settings.json
+│   ├── settings.json          # vault_path + tool permissions
 │   └── skills/
 │       ├── learn-source/
+│       ├── fill-gaps/
 │       ├── rebuild-project/
 │       └── save-to-vault/
 ├── docs/
 │   └── vault-format-reference.md
 ├── sources/        # gitignored — raw transcripts and NLM output
-├── workspace/      # gitignored — 7-file learning packages
+├── workspace/      # gitignored — 8-file learning packages
 ├── projects/       # gitignored — MVP project rebuilds
 ├── CLAUDE.md
 └── README.md
@@ -96,14 +106,14 @@ learning-lab/
 
 ## Vault Integration
 
-Polished notes are exported to a separate Obsidian vault (`The Vault/`). Each export produces:
+Polished notes are exported to a separate Obsidian vault. Each export produces:
 
-- `research/{Note-Title}.md` — English research note with wiki-links
+- `research/{Note-Title}.md` — English research note with YAML Properties and wiki-links
 - `research/assets/{slug}-transcript.txt` — raw source transcript
 - `research/assets/{slug}-study-guide.md` — NLM study guide
 - `daily-notes/{YYYY-MM-DD}.md` — daily note entry (appended)
 
-The vault path is not tracked in this repo — it lives at `c:/Users/endri/Desktop/Claude-Projects/The Vault/`.
+The vault path is configured in `.claude/settings.json` → `vault_path`.
 
 ---
 

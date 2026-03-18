@@ -1,12 +1,26 @@
 {
+  "vault_path": "c:/Users/endri/Desktop/Claude-Projects/The Vault/",
   "permissions": {
     "allow": [
       "Bash(yt-dlp:*)",
       "Bash(notebooklm:*)",
       "Bash(defuddle:*)",
       "Bash(python:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(rtk:*)",
+      "Bash(buzz:*)",
+      "Bash(qmd:*)"
     ],
     "deny": []
+  },
+  "hooks": {
+    "TaskCompleted": [
+      "qmd index \"c:/Users/endri/Desktop/Claude-Projects/The Vault/\" --silent"
+    ]
+  },
+  "customCommands": {
+    "lab": {
+      "prompt": "Führe den 'lab-master' Skill für folgende Eingabe aus: "
+    }
   }
 }
