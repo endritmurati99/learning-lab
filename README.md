@@ -32,11 +32,11 @@ Source (YouTube / web / PDF / text)
 
 | Skill | Trigger | What it does |
 |-------|---------|--------------|
-| `lab-master` | "lab run", "full pipeline" | Master skill that chains all skills together automatically |
+| `lab-master` | "lab run", `/lab --auto <url>` | Master skill that chains all skills. `--auto` = zero interaction. |
 | `learn-source` | URL or file path | Ingest → NLM analysis → 8-file learning package |
 | `fill-gaps` | "fill gaps", "fülle Lücken" | Web search for open questions → integrate answers |
 | `rebuild-project` | "rebuild", "baue nach" | Build a minimal MVP from a tutorial source |
-| `save-to-vault` | "save to vault", "speichere im Vault" | Export to Obsidian vault in the correct format |
+| `save-to-vault` | "save to vault", "speichere im Vault" | Export to Obsidian vault with full asset bundle |
 
 ---
 
@@ -89,12 +89,18 @@ learning-lab/
 ├── .claude/
 │   ├── settings.json          # vault_path + tool permissions
 │   └── skills/
+│       ├── lab-master/
 │       ├── learn-source/
 │       ├── fill-gaps/
 │       ├── rebuild-project/
 │       └── save-to-vault/
 ├── docs/
-│   └── vault-format-reference.md
+│   ├── vault-format-reference.md
+│   └── workflow-spec.md
+├── scripts/
+│   ├── run_state.py           # run.json state machine
+│   └── vault_sync.py          # Vault asset export + migration
+├── tests/                     # pytest suite for scripts
 ├── sources/        # gitignored — raw transcripts and NLM output
 ├── workspace/      # gitignored — 8-file learning packages
 ├── projects/       # gitignored — MVP project rebuilds
@@ -108,12 +114,15 @@ learning-lab/
 
 Polished notes are exported to a separate Obsidian vault. Each export produces:
 
-- `research/{Note-Title}.md` — English research note with YAML Properties and wiki-links
-- `research/assets/{slug}-transcript.txt` — raw source transcript
-- `research/assets/{slug}-study-guide.md` — NLM study guide
-- `daily-notes/{YYYY-MM-DD}.md` — daily note entry (appended)
+- `research/{Note-Title}.md` — English research note with full YAML frontmatter and wiki-links
+- `research/assets/{source_type}/{slug}/Source Bundle.md` — index of all source artifacts
+- `research/assets/{source_type}/{slug}/transcript.txt` — raw source transcript
+- `research/assets/{source_type}/{slug}/study-guide.md` — NLM study guide
+- `daily-notes/{YYYY-MM-DD}.md` — daily note entry (marker-based, deduped)
 
 The vault path is configured in `.claude/settings.json` → `vault_path`.
+
+Assets are organized by source type (`youtube/`, `web/`, `pdf/`) to avoid a flat graveyard in `research/assets/`.
 
 ---
 

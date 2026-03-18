@@ -14,7 +14,7 @@ A skill-based learning pipeline for Claude Code. Take any source (YouTube video,
 
 ### Five-Skill Pipeline
 
-0. **`lab-master`** — Master orchestrator that natively chains the entire pipeline (`learn-source` → `fill-gaps` → `rebuild-project` → `save-to-vault`) across a single source in one command.
+0. **`lab-master`** — Master orchestrator that natively chains the entire pipeline (`learn-source` → `fill-gaps` → `rebuild-project` → `save-to-vault`) across a single source in one command. Supports `--auto` flag for fully non-interactive runs.
 1. **`learn-source`** — Detect source type → ingest via yt-dlp/defuddle/Read tool → send to NotebookLM → structure output into 8-file learning package in `workspace/{slug}/`. Supports multi-source: adding new sources to an existing slug's NLM notebook.
 2. **`rebuild-project`** — Take a tutorial source and create a minimal MVP project in `projects/{slug}/`
 3. **`fill-gaps`** — Read open questions from `05_offene_fragen.md` → web search → integrate answers back into workspace with source attribution
@@ -86,7 +86,8 @@ When exporting via `save-to-vault`:
 ### Research Note
 
 - Location: `{vault_path}/research/{Note-Title}.md`
-- **YAML Properties (frontmatter)** for metadata — `research_date`, `source_url`, `source_label`, `tags`, `transcript`
+- **YAML frontmatter** — see `docs/vault-format-reference.md` for the canonical template
+- Key frontmatter fields: `research_date`, `source_url`, `source_label`, `source_type`, `source_slug`, `tags`, `transcript`, `asset_bundle`, `project_bundle` (optional), `draft_status`, `export_identity`, `external_validation`
 - Language: English
 - Structure:
   ```md
@@ -94,8 +95,14 @@ When exporting via `save-to-vault`:
   research_date: YYYY-MM-DD
   source_url: "https://..."
   source_label: "Label"
+  source_type: "youtube"
+  source_slug: "example-slug"
   tags: [research, topic]
-  transcript: "[[research/assets/{slug}-transcript.txt]]"
+  transcript: "[[research/assets/{source_type}/{source_slug}/transcript.txt]]"
+  asset_bundle: "[[research/assets/{source_type}/{source_slug}/Source Bundle]]"
+  draft_status: draft_prepared
+  export_identity: "{source_type}:{source_slug}:sha256:..."
+  external_validation: false
   ---
 
   # {Title}
@@ -105,6 +112,7 @@ When exporting via `save-to-vault`:
   ## Executive Summary
   ## Practical Implications For My Workflow
   ## High-Signal Concepts To Revisit
+  ## External Validation
   ## Open Questions
   ## Source Notes
   ```
@@ -113,14 +121,14 @@ When exporting via `save-to-vault`:
 
 ### Assets
 
-- Transcripts: `{vault_path}/research/assets/{slug}-transcript.txt`
-- NLM outputs: `{vault_path}/research/assets/{slug}-{type}.{ext}`
-- Wiki-link references: `[[research/assets/...]]`
+- Location: `{vault_path}/research/assets/{source_type}/{source_slug}/`
+- Contains: `Source Bundle.md`, `transcript.txt`, `metadata.tsv`, NLM deliverables
+- Wiki-link: `[[research/assets/{source_type}/{source_slug}/Source Bundle]]`
 
 ### Daily Note
 
 - Location: `{vault_path}/daily-notes/{YYYY-MM-DD}.md`
-- Append new entries under `## Research` section
+- Update existing `<!-- learning-lab:{source_type}:{source_slug} -->` block or append under `## Research`
 
 ---
 
@@ -136,7 +144,7 @@ Per `.claude/settings.json`:
 
 - Never auto-delete `sources/` or `workspace/` files — always ask first
 - Never commit to git: `.env`, `vault/**`, NotebookLM credentials, secrets
-- Write to The Vault only with explicit user confirmation (via `save-to-vault` skill)
+- Write to The Vault only with explicit user confirmation (via `save-to-vault` skill) — exception: `--auto` mode skips confirmation for new notes, but always stops if a note already exists
 - Distinguish strictly: facts from source vs. own interpretation/conclusions
 - Mark uncertainties explicitly as "Unsicherheit" in German workspace files
 - No invented APIs, tools, or features — source-faithful first
@@ -176,14 +184,14 @@ User: "fill gaps {slug}" or "fülle Lücken"
 ```
 User: "save to vault {slug}"
 → Read vault_path from settings.json
-→ Read workspace files
-→ Check Vault conventions (CLAUDE.md)
+→ Read workspace files + source metadata
+→ Check Vault conventions (docs/vault-format-reference.md)
 → Transform German → English
-→ Create research note with YAML Properties
-→ Verify backlinks against existing Vault notes
-→ Copy assets to research/assets/
-→ Update daily note
-→ Ask for confirmation before writing
+→ Build draft research note with full YAML frontmatter
+→ Check for existing note at target path
+→ Ask for confirmation before writing (skipped in --auto mode for new notes)
+→ Call: python scripts/vault_sync.py export-draft --slug ... --note-title ... --main-insight ...
+→ Update daily note via marker block
 ```
 
 ---
@@ -194,6 +202,28 @@ User: "save to vault {slug}"
 - **Vault research notes:** English (final, polished, analytical)
 - **Config & docs:** English
 - Workspace file quality rule: source-faithful first, interpretation second
+
+---
+
+## Scripts
+
+| Script | Commands | Purpose |
+|--------|----------|---------|
+| `scripts/run_state.py` | `init`, `show`, `set`, `append`, `validate`, `persist-notebook-id`, `sync-workspace`, `summary`, `refresh-next` | Sole writer for `sources/{slug}/run.json`. All state changes go through this. |
+| `scripts/vault_sync.py` | `export-draft`, `migrate-flat-assets` | Prepare Vault export bundles; migrate old flat assets to typed subfolders |
+
+### Vault-only Run Statuses
+
+The `vault` stage uses its own status vocabulary:
+
+| Status | Meaning |
+|--------|---------|
+| `draft_prepared` | Draft note built, ready for confirmation |
+| `blocked_input` | Waiting for user to provide missing input |
+| `awaiting_confirmation` | Waiting for explicit write approval |
+| `done` | Successfully written to Vault |
+| `failed` | Write failed |
+| `stale` | Draft exists but source data has changed |
 
 ---
 

@@ -49,23 +49,42 @@ Then report that there is nothing to research.
 
 ### Step 3 - Enter user-selection boundary
 
-Before choosing questions:
-
-```bash
-python scripts/run_state.py set --slug "{slug}" --path fill_gaps.status --value awaiting_user_input
-python scripts/run_state.py set --slug "{slug}" --path next_recommended_step --value fill-gaps
-```
-
 Rank questions by researchability:
 
 1. factual
 2. conceptual
 3. speculative
 
+**Check auto mode:** read `auto_mode` from `sources/{slug}/run.json`.
+
+If `auto_mode` is `true`:
+
+- do NOT set `fill_gaps.status = awaiting_user_input`
+- auto-select all questions ranked factual or conceptual, up to `max_questions`
+- skip speculative questions
+- set `fill_gaps.status = in_progress` and proceed directly to Step 5
+
+If `auto_mode` is not set or `false`:
+
+```bash
+python scripts/run_state.py set --slug "{slug}" --path fill_gaps.status --value awaiting_user_input
+python scripts/run_state.py set --slug "{slug}" --path next_recommended_step --value fill-gaps
+```
+
 Present the ranked list and confirm which questions to research.
 Respect `max_questions`.
 
 ### Step 4 - Enter edit-confirmation boundary
+
+**Check auto mode:** read `auto_mode` from `sources/{slug}/run.json`.
+
+If `auto_mode` is `true`:
+
+- do NOT set `fill_gaps.status = awaiting_confirmation`
+- apply all intended workspace updates directly
+- proceed immediately to Step 5
+
+If `auto_mode` is not set or `false`:
 
 Before modifying workspace files:
 

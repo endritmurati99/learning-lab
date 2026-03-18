@@ -10,6 +10,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SETTINGS_PATH = ROOT / ".claude" / "settings.json"
 DEFAULT_WORKSPACE_FILES = [
     "00_zusammenfassung.md",
     "01_kernkonzepte.md",
@@ -20,7 +21,7 @@ DEFAULT_WORKSPACE_FILES = [
     "06_notebooklm_artefakte.md",
     "07_logik_check.md",
 ]
-ALLOWED_STATUSES = {
+GENERIC_ALLOWED_STATUSES = {
     "not_started",
     "in_progress",
     "awaiting_user_input",
@@ -30,6 +31,16 @@ ALLOWED_STATUSES = {
     "skipped",
     "done",
 }
+VAULT_ALLOWED_STATUSES = {
+    "not_started",
+    "draft_prepared",
+    "blocked_input",
+    "awaiting_confirmation",
+    "done",
+    "failed",
+    "stale",
+}
+ALLOWED_STATUSES = GENERIC_ALLOWED_STATUSES | VAULT_ALLOWED_STATUSES
 REQUIRED_TOP_LEVEL_KEYS = {
     "schema_version",
     "updated_at",
@@ -56,12 +67,32 @@ REQUIRED_NESTED_KEYS = {
     },
     "fill_gaps": {"status", "answered_questions"},
     "rebuild": {"status", "reason", "project_path"},
-    "vault": {"status", "note_path"},
+    "vault": {
+        "status",
+        "note_path",
+        "bundle_path",
+        "project_bundle_path",
+        "daily_note_path",
+        "draft_title",
+        "export_identity",
+        "last_exported_at",
+        "last_error_code",
+        "last_error_message",
+    },
 }
+VAULT_PATH_REQUIRED_STATUSES = {"draft_prepared", "awaiting_confirmation", "done", "stale"}
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def load_settings() -> dict[str, Any]:
+    return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+
+
+def vault_root() -> Path:
+    return Path(load_settings()["vault_path"]).resolve()
 
 
 def source_dir(slug: str) -> Path:
@@ -74,6 +105,26 @@ def workspace_dir(slug: str) -> Path:
 
 def state_path(slug: str) -> Path:
     return source_dir(slug) / "run.json"
+
+
+def default_vault_state(source_type: str, slug: str) -> dict[str, Any]:
+    return {
+        "status": "not_started",
+        "note_path": None,
+        "bundle_path": None,
+        "project_bundle_path": None,
+        "daily_note_path": None,
+        "draft_title": None,
+        "export_identity": {
+            "source_type": source_type,
+            "source_slug": slug,
+            "project_slug": None,
+            "source_fingerprint": None,
+        },
+        "last_exported_at": None,
+        "last_error_code": None,
+        "last_error_message": None,
+    }
 
 
 def default_state(source_type: str, source_input: str, slug: str, title: str | None) -> dict[str, Any]:
@@ -115,10 +166,7 @@ def default_state(source_type: str, source_input: str, slug: str, title: str | N
             "reason": None,
             "project_path": None,
         },
-        "vault": {
-            "status": "not_started",
-            "note_path": None,
-        },
+        "vault": default_vault_state(source_type, slug),
         "next_recommended_step": "ingest",
     }
 
@@ -132,11 +180,45 @@ def parse_value(raw: str, as_json: bool) -> Any:
         return raw
 
 
+def deep_fill_defaults(target: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+    for key, value in defaults.items():
+        if key not in target:
+            target[key] = value
+            continue
+        if isinstance(value, dict) and isinstance(target[key], dict):
+            deep_fill_defaults(target[key], value)
+    return target
+
+
+def normalize_state(data: dict[str, Any]) -> dict[str, Any]:
+    source = data.get("source", {})
+    source_type = source.get("type", "source")
+    slug = source.get("slug", "unknown")
+    defaults = default_state(source_type, source.get("input", ""), slug, source.get("title"))
+    deep_fill_defaults(data, defaults)
+
+    vault = data.get("vault", {})
+    if vault.get("status") == "in_progress":
+        vault["status"] = "draft_prepared"
+    if vault.get("status") == "blocked":
+        vault["status"] = "blocked_input"
+
+    export_identity = vault.get("export_identity", {})
+    if isinstance(export_identity, dict):
+        export_identity["source_type"] = export_identity.get("source_type") or source_type
+        export_identity["source_slug"] = export_identity.get("source_slug") or slug
+        export_identity.setdefault("project_slug", None)
+        export_identity.setdefault("source_fingerprint", None)
+
+    return data
+
+
 def load_state(slug: str) -> dict[str, Any]:
     path = state_path(slug)
     if not path.exists():
         raise FileNotFoundError(f"State file not found: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return normalize_state(data)
 
 
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -184,13 +266,48 @@ def ensure_list(value: Any, dotted_path: str) -> list[Any]:
     return value
 
 
-def normalize_path(path_value: str | None) -> Path | None:
+def normalize_repo_path(path_value: str | None) -> Path | None:
     if not path_value:
         return None
     candidate = Path(path_value)
     if candidate.is_absolute():
         return candidate
     return ROOT / candidate
+
+
+def normalize_vault_path(path_value: str | None) -> Path | None:
+    if not path_value:
+        return None
+    candidate = Path(path_value)
+    if candidate.is_absolute():
+        return candidate
+    return vault_root() / candidate
+
+
+def validate_export_identity(
+    export_identity: dict[str, Any],
+    source_type: str,
+    slug: str,
+) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not isinstance(export_identity, dict):
+        errors.append("vault.export_identity must be an object")
+        return errors, warnings
+
+    if export_identity.get("source_type") != source_type:
+        errors.append("vault.export_identity.source_type must match source.type")
+    if export_identity.get("source_slug") != slug:
+        errors.append("vault.export_identity.source_slug must match source.slug")
+    if not export_identity.get("source_fingerprint"):
+        warnings.append("vault.export_identity.source_fingerprint is empty")
+
+    project_slug = export_identity.get("project_slug")
+    if project_slug is not None and not isinstance(project_slug, str):
+        errors.append("vault.export_identity.project_slug must be a string or null")
+
+    return errors, warnings
 
 
 def validate_state(data: dict[str, Any], slug: str, check_files: bool) -> tuple[list[str], list[str]]:
@@ -211,14 +328,19 @@ def validate_state(data: dict[str, Any], slug: str, check_files: bool) -> tuple[
             errors.append(f"Section '{section}' is missing keys: {', '.join(missing_nested)}")
 
     source = data.get("source", {})
+    source_type = source.get("type", "source")
     if source.get("slug") != slug:
         errors.append(f"Slug mismatch: expected '{slug}', found '{source.get('slug')}'")
 
-    for section in ("ingest", "notebooklm", "workspace", "fill_gaps", "rebuild", "vault"):
+    for section in ("ingest", "notebooklm", "workspace", "fill_gaps", "rebuild"):
         stage = data.get(section, {})
         status = stage.get("status")
-        if status not in ALLOWED_STATUSES:
+        if status not in GENERIC_ALLOWED_STATUSES:
             errors.append(f"Invalid status in '{section}': {status}")
+
+    vault_status = data.get("vault", {}).get("status")
+    if vault_status not in VAULT_ALLOWED_STATUSES:
+        errors.append(f"Invalid status in 'vault': {vault_status}")
 
     for dotted_path in (
         "ingest.artifacts",
@@ -243,6 +365,36 @@ def validate_state(data: dict[str, Any], slug: str, check_files: bool) -> tuple[
         errors.append("workspace.is_tutorial must be a boolean")
     if not isinstance(data.get("workspace", {}).get("files_complete"), bool):
         errors.append("workspace.files_complete must be a boolean")
+
+    vault = data.get("vault", {})
+    note_path = vault.get("note_path")
+    bundle_path = vault.get("bundle_path")
+    project_bundle_path = vault.get("project_bundle_path")
+    daily_note_path = vault.get("daily_note_path")
+    draft_title = vault.get("draft_title")
+    export_identity = vault.get("export_identity", {})
+
+    if vault_status in VAULT_PATH_REQUIRED_STATUSES:
+        if not note_path:
+            errors.append(f"vault.status={vault_status} requires vault.note_path")
+        if not bundle_path:
+            errors.append(f"vault.status={vault_status} requires vault.bundle_path")
+        if not daily_note_path:
+            errors.append(f"vault.status={vault_status} requires vault.daily_note_path")
+        if not draft_title:
+            errors.append(f"vault.status={vault_status} requires vault.draft_title")
+        identity_errors, identity_warnings = validate_export_identity(export_identity, source_type, slug)
+        errors.extend(identity_errors)
+        warnings.extend(identity_warnings)
+
+    if vault_status == "blocked_input" and not vault.get("last_error_code"):
+        errors.append("vault.status=blocked_input requires vault.last_error_code")
+
+    if vault_status == "failed" and not vault.get("last_error_code"):
+        errors.append("vault.status=failed requires vault.last_error_code")
+
+    if project_bundle_path and data.get("rebuild", {}).get("status") != "done":
+        errors.append("vault.project_bundle_path is only allowed when rebuild.status=done")
 
     if check_files:
         src_dir = source_dir(slug)
@@ -279,19 +431,27 @@ def validate_state(data: dict[str, Any], slug: str, check_files: bool) -> tuple[
         if generated_files and generated_files != actual_files:
             warnings.append("workspace.generated_files does not match actual workspace contents")
 
-        project_path = normalize_path(data.get("rebuild", {}).get("project_path"))
+        project_path = normalize_repo_path(data.get("rebuild", {}).get("project_path"))
         if data.get("rebuild", {}).get("status") == "done":
             if project_path is None:
                 errors.append("rebuild.status is done but rebuild.project_path is empty")
             elif not project_path.exists():
                 errors.append(f"Rebuild project path missing: {project_path}")
 
-        note_path = normalize_path(data.get("vault", {}).get("note_path"))
-        if data.get("vault", {}).get("status") == "done":
-            if note_path is None:
-                errors.append("vault.status is done but vault.note_path is empty")
-            elif not note_path.exists():
-                errors.append(f"Vault note path missing: {note_path}")
+        if vault_status in VAULT_PATH_REQUIRED_STATUSES:
+            normalized_note_path = normalize_vault_path(note_path)
+            normalized_bundle_path = normalize_vault_path(bundle_path)
+            normalized_daily_note_path = normalize_vault_path(daily_note_path)
+            if normalized_note_path is None or not normalized_note_path.exists():
+                errors.append(f"Vault note path missing: {normalized_note_path}")
+            if normalized_bundle_path is None or not normalized_bundle_path.exists():
+                errors.append(f"Vault bundle path missing: {normalized_bundle_path}")
+            if normalized_daily_note_path is None or not normalized_daily_note_path.exists():
+                errors.append(f"Vault daily note path missing: {normalized_daily_note_path}")
+            if project_bundle_path:
+                normalized_project_bundle_path = normalize_vault_path(project_bundle_path)
+                if normalized_project_bundle_path is None or not normalized_project_bundle_path.exists():
+                    errors.append(f"Vault project bundle path missing: {normalized_project_bundle_path}")
 
     return errors, warnings
 
@@ -338,10 +498,11 @@ def infer_next_step(data: dict[str, Any]) -> str:
     vault_status = vault.get("status")
     if vault_status in {
         "not_started",
-        "in_progress",
+        "draft_prepared",
+        "blocked_input",
         "awaiting_confirmation",
-        "blocked",
         "failed",
+        "stale",
     }:
         return "save-to-vault"
 
@@ -351,6 +512,7 @@ def infer_next_step(data: dict[str, Any]) -> str:
 def format_summary(data: dict[str, Any]) -> str:
     stored_next = data.get("next_recommended_step", "unknown")
     computed_next = infer_next_step(data)
+    vault = data.get("vault", {})
     lines = [
         f"Slug: {data.get('source', {}).get('slug', 'unknown')}",
         f"Source Type: {data.get('source', {}).get('type', 'unknown')}",
@@ -363,7 +525,8 @@ def format_summary(data: dict[str, Any]) -> str:
         ),
         f"Fill Gaps: {data.get('fill_gaps', {}).get('status', 'unknown')}",
         f"Rebuild: {data.get('rebuild', {}).get('status', 'unknown')}",
-        f"Vault: {data.get('vault', {}).get('status', 'unknown')}",
+        f"Vault: {vault.get('status', 'unknown')}",
+        f"Vault Draft Title: {vault.get('draft_title') or 'n/a'}",
         f"Stored Next: {stored_next}",
         f"Computed Next: {computed_next}",
     ]

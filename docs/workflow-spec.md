@@ -2,32 +2,24 @@
 
 ## Purpose
 
-`learning-lab` uses a file-backed workflow state so that every run can be:
+`learning-lab` uses a file-backed workflow state so every run can be:
 
 - resumed
 - validated
 - inspected
-- kept consistent across `sources/`, `workspace/`, `projects/`, and the Vault
+- exported to The Vault without guesswork
 
 The canonical state file is:
 
 `sources/{slug}/run.json`
 
-This file is the workflow contract, not a casual note.
-
----
-
 ## State Mutation Rule
 
 `run.json` must never be edited with ad-hoc text replacement.
 
-All state writes must go through:
+All state writes go through:
 
 `python scripts/run_state.py ...`
-
-This keeps writes atomic and avoids malformed JSON.
-
----
 
 ## Lifecycle
 
@@ -37,17 +29,13 @@ A run moves through these stages:
 2. `ingest`
 3. `notebooklm`
 4. `workspace`
-5. `fill_gaps`
-6. `rebuild`
+5. `rebuild`
+6. `fill_gaps`
 7. `vault`
-
-Every stage has its own status plus stage-specific metadata.
-
----
 
 ## Allowed Status Values
 
-The allowed generic status values are:
+### Generic stage statuses
 
 - `not_started`
 - `in_progress`
@@ -58,10 +46,15 @@ The allowed generic status values are:
 - `skipped`
 - `done`
 
-`lab-master` or any downstream skill must not assume a stage is complete only because the status says `done`.
-It must validate the filesystem state when the next action depends on it.
+### Vault-only statuses
 
----
+- `not_started`
+- `draft_prepared`
+- `blocked_input`
+- `awaiting_confirmation`
+- `done`
+- `failed`
+- `stale`
 
 ## Canonical State Shape
 
@@ -91,16 +84,7 @@ It must validate the filesystem state when the next action depends on it.
     "status": "not_started",
     "is_tutorial": false,
     "files_complete": false,
-    "required_files": [
-      "00_zusammenfassung.md",
-      "01_kernkonzepte.md",
-      "02_schritt_fuer_schritt.md",
-      "03_uebungen.md",
-      "04_projekt_rebuild.md",
-      "05_offene_fragen.md",
-      "06_notebooklm_artefakte.md",
-      "07_logik_check.md"
-    ],
+    "required_files": [],
     "optional_files": [],
     "generated_files": []
   },
@@ -115,168 +99,97 @@ It must validate the filesystem state when the next action depends on it.
   },
   "vault": {
     "status": "not_started",
-    "note_path": null
+    "note_path": null,
+    "bundle_path": null,
+    "project_bundle_path": null,
+    "daily_note_path": null,
+    "draft_title": null,
+    "export_identity": {
+      "source_type": "youtube",
+      "source_slug": "example",
+      "project_slug": null,
+      "source_fingerprint": null
+    },
+    "last_exported_at": null,
+    "last_error_code": null,
+    "last_error_message": null
   },
   "next_recommended_step": "ingest"
 }
 ```
 
----
+## Vault Invariants
 
-## Preflight Model
+- `draft_prepared` means note, bundle, and daily-note draft already exist
+- `awaiting_confirmation` means the draft was shown and final approval is pending
+- `done` means the approved draft is the final Vault export
+- `blocked_input` means a user/input problem is preventing progress
+- `failed` means a technical/system problem occurred and an error code was persisted
 
-Preflight is staged, not global.
+## Export Identity
 
-### Core preflight
+The Vault export identity is:
 
-Required for any run:
+- stable key: `source_type + source_slug`
+- content validation: `source_fingerprint`
 
-- `python`
+Re-runs:
 
-Recommended for local reading and token control:
+- same key + same fingerprint -> update in place, no duplicate daily-note entry
+- same key + different fingerprint -> update in place, refresh draft/final content
+- different key + same content -> warn, do not auto-merge
 
-- `rtk`
+## Primary Workflow Priority
 
-### Source-type preflight
+`next_recommended_step` follows this order:
 
-Required only when relevant:
+1. `ingest`
+2. `notebooklm`
+3. `workspace`
+4. `rebuild-project`
+5. `fill-gaps`
+6. `save-to-vault`
+7. `complete`
 
-- YouTube: `yt-dlp`
-- Web pages: `defuddle`
-- PDF compaction: `pandoc` if used, otherwise fall back
-
-### Stage-type preflight
-
-Required only for the stage being entered:
-
-- NotebookLM generation: `notebooklm`
-- Audio transcription fallback: `buzz` and ideally `ffmpeg`
-- Vault export: `qmd`
-
-If a stage cannot run, mark that stage as `blocked` or `failed` with a warning instead of silently continuing.
-
----
+Vault drafts may exist early, but they must not overtake rebuild or fill-gaps in the primary route.
 
 ## Definition Of Done
 
 ### learn-source
 
-`learn-source` is only `done` when all of the following are true:
-
-- `sources/{slug}/run.json` exists and validates
-- ingest artifacts exist for the chosen source type
-- `notebooklm.notebook_id` is persisted in both:
-  - `run.json`
-  - `sources/{slug}/notebook_id.txt`
-- `workspace/{slug}/` exists
-- all required workspace files exist
-- `workspace.files_complete` is `true`
-
-### fill-gaps
-
-`fill-gaps` is only `done` when:
-
-- the selected questions were researched
-- citations were added
-- confidence was recorded
-- unresolved questions remain marked as unresolved
+- source artifacts exist
+- NotebookLM artifacts exist
+- workspace files exist
+- `workspace.files_complete = true`
 
 ### rebuild-project
 
-`rebuild-project` is only `done` when:
-
-- `projects/{slug}/` exists
+- local project exists
 - runnable code exists
 - tests exist
-- `workspace/{slug}/04_projekt_rebuild.md` points to the real project result
+- `04_projekt_rebuild.md` points to the real result
 
-If the source is not rebuildable, use:
+### fill-gaps
 
-- `rebuild.status = "skipped"`
-- `rebuild.reason = "..."`
+- chosen questions were researched
+- citations were integrated
+- confidence was recorded
 
 ### save-to-vault
 
-`save-to-vault` is only `done` when:
-
-- the draft was reviewed
-- confirmation was received
-- the note was written
-- the asset copy step succeeded
-- the daily note update succeeded
-
----
-
-## Workspace File Contract
-
-`workspace/{slug}/` must always contain the eight canonical files.
-
-`04_projekt_rebuild.md` is not optional as a file.
-Its contents may say one of:
-
-- rebuildable now
-- not applicable
-- ready for rebuild later
-
-`07_logik_check.md` is always required.
-
----
+- draft exists in the Vault
+- final confirmation was received
+- `vault.status = done`
+- note, bundle, and daily-note paths still validate
 
 ## Resume Rules
 
-When a run is re-opened:
+On resume:
 
-1. Read `run.json`
-2. Validate it
-3. Recompute `next_recommended_step`
-4. Cross-check the filesystem
-5. Resume from `next_recommended_step` only if the prerequisites for that step still hold
+1. read `run.json`
+2. validate it
+3. recompute `next_recommended_step`
+4. cross-check filesystem state
+5. continue from the computed next step
 
-If the filesystem and state file disagree, prefer repairing the state over guessing.
-
----
-
-## Example Commands
-
-Initialize a new run:
-
-```bash
-python scripts/run_state.py init --slug example --source-type youtube --input "https://example.com" --title "Example"
-```
-
-Mark ingest in progress:
-
-```bash
-python scripts/run_state.py set --slug example --path ingest.status --value in_progress
-python scripts/run_state.py set --slug example --path next_recommended_step --value ingest
-```
-
-Persist the NotebookLM notebook id:
-
-```bash
-python scripts/run_state.py persist-notebook-id --slug example --notebook-id 1234
-```
-
-Sync workspace file completeness:
-
-```bash
-python scripts/run_state.py sync-workspace --slug example
-```
-
-Show a concise workflow summary:
-
-```bash
-python scripts/run_state.py summary --slug example
-```
-
-Recompute the next recommended step:
-
-```bash
-python scripts/run_state.py refresh-next --slug example
-```
-
-Validate state plus required files:
-
-```bash
-python scripts/run_state.py validate --slug example --check-files
-```
+If state and filesystem disagree, repair state before proceeding.

@@ -115,6 +115,9 @@ tags:
 transcript: "[[research/assets/{source_type}/{source_slug}/transcript.txt]]"
 asset_bundle: "[[research/assets/{source_type}/{source_slug}/Source Bundle]]"
 project_bundle: "[[projects/{project-slug}/Project Note]]" # optional
+draft_status: draft_prepared
+export_identity: "youtube:example-slug:sha256:..."
+external_validation: false
 ---
 
 # {Note Title}
@@ -148,11 +151,12 @@ project_bundle: "[[projects/{project-slug}/Project Note]]" # optional
 # YYYY-MM-DD
 
 ## Research
+<!-- learning-lab:{source_type}:{source_slug} -->
 - Added [[{Note Title}]]
 - Main insight: {one-sentence summary}
 ```
 
-If the daily note already exists, append under `## Research`.
+If the daily note already exists, update the existing block with the same marker instead of appending a duplicate.
 
 ## Format Rules
 
@@ -161,6 +165,8 @@ If the daily note already exists, append under `## Research`.
 - keep the main research note analytical and synthesis-first
 - keep raw artifacts out of the root `research/` folder
 - add `External Validation` when web research or official docs were used
+- `External Validation` is meaningful only when it changed or validated the note
+- `draft_status` and `export_identity` are mandatory for V3 drafts
 - if a rebuild exists, link it from the research note instead of burying it in repo paths only
 
 ## Automation Helpers

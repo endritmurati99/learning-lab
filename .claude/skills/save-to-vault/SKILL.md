@@ -1,39 +1,39 @@
 ---
 name: save-to-vault
-description: Transfer a completed or near-complete learning package into The Vault using source bundles, project mirrors, and a concept-first research note title. Tracks draft/export progress in `run.json`.
+description: Single-writer workflow for Obsidian exports. Prepares Vault drafts for all source types, then finalizes them only after explicit confirmation.
 ---
 
 # Save to Vault
 
-`save-to-vault` exports an existing learning package into The Vault as:
+`save-to-vault` is the only business-layer owner of `vault.*` in `run.json`.
+It has two modes:
 
-- a research note in `research/`
-- a source-specific asset bundle in `research/assets/{source_type}/{slug}/`
-- an optional project mirror in `projects/{project-slug}/`
-- a daily-note update
+- `draft` - prepare or refresh the Obsidian draft
+- `finalize` - mark the reviewed draft as final
 
-This step always stops for explicit confirmation before the final write.
+`vault_sync.py` may write files, but only under the direction of this skill.
 
 ## Prerequisites
 
 - `sources/{slug}/run.json` exists
 - `workspace/{slug}/` exists and is complete enough to summarize
+- `docs/vault-format-reference.md` is the current Vault contract
 - the Vault exists at `vault_path`
-- `docs/vault-format-reference.md` is the current source of truth
 
 ## Inputs
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `slug` | required | The learning-package slug |
-| `note_title` | concept-first auto-suggestion | Human-facing Vault note title |
-| `project_slug` | optional | Vault folder slug for mirrored rebuild output |
+| `slug` | required | Learning-package slug |
+| `mode` | `draft` | `draft` or `finalize` |
+| `note_title` | auto | Concept-first title for the Vault note |
+| `project_slug` | optional | Vault project mirror slug |
 
 ## Execution Steps
 
-### Step 1 - Validate state and local files
+### Step 1 - Validate state
 
-Before doing any Vault work:
+Always start with:
 
 ```bash
 python scripts/run_state.py validate --slug "{slug}" --check-files
@@ -41,29 +41,9 @@ python scripts/run_state.py refresh-next --slug "{slug}"
 python scripts/run_state.py summary --slug "{slug}"
 ```
 
-Resolve `vault_path` from `.claude/settings.json`.
-Confirm that the Vault exists.
-
-### Step 2 - Check Vault conventions and existing notes
+### Step 2 - Read local inputs
 
 Read:
-
-- `docs/vault-format-reference.md`
-- `{vault_path}/CLAUDE.md` if available
-
-Check whether a closely related research note already exists.
-
-Title rule:
-
-- do not blindly reuse clicky source titles
-- prefer a calmer, concept-first note title
-- example: `Reusable Claude Skills for Agent Workflows`
-
-### Step 3 - Read workspace, source metadata, and external research
-
-Read the workspace package plus source metadata from `sources/{slug}/`.
-
-Relevant files:
 
 - `00_zusammenfassung.md`
 - `01_kernkonzepte.md`
@@ -72,33 +52,62 @@ Relevant files:
 - `05_offene_fragen.md`
 - `06_notebooklm_artefakte.md`
 - `07_logik_check.md`
-- `metadata.tsv`
-- available `nlm-*` files
+- source metadata from `sources/{slug}/`
 
-If `fill-gaps` has already been run or official docs / web research were used, include them as `External Validation`.
+If external web validation exists, keep it clearly separate as `External Validation`.
 
-### Step 4 - Build the Vault draft
+### Step 3 - Draft mode
 
-Create a draft research note in English with:
+Use `draft` mode when:
 
-- YAML frontmatter
-- `transcript`
-- `asset_bundle`
-- optional `project_bundle`
-- core thesis
-- key takeaways
-- executive summary
-- practical implications
-- high-signal concepts
-- external validation
-- open questions
-- source notes
+- `workspace.status = done`
+- the Vault draft does not exist yet
+- or the draft must be refreshed after rebuild / fill-gaps changes
 
-The note should be the synthesis layer, not a dump of raw artifacts.
+Draft mode must:
 
-### Step 5 - Enter confirmation boundary
+1. choose a concept-first `note_title`
+2. generate the draft note body in English
+3. write that draft body to a temporary local file
+4. call `vault_sync.py export-draft`
+5. update `run.json` with the returned paths and identity
 
-Before writing anything to the Vault:
+Required command:
+
+```bash
+python scripts/vault_sync.py export-draft --slug "{slug}" --note-title "{note_title}" --note-body-file "{temp_note_body}" --main-insight "{main_insight}" --project-slug "{project_slug}" --project-title "{project_title}"
+```
+
+After a successful draft export:
+
+```bash
+python scripts/run_state.py set --slug "{slug}" --path vault.note_path --value "{note_path}"
+python scripts/run_state.py set --slug "{slug}" --path vault.bundle_path --value "{bundle_path}"
+python scripts/run_state.py set --slug "{slug}" --path vault.project_bundle_path --value "{project_bundle_path_or_null}" --json
+python scripts/run_state.py set --slug "{slug}" --path vault.daily_note_path --value "{daily_note_path}"
+python scripts/run_state.py set --slug "{slug}" --path vault.draft_title --value "{note_title}"
+python scripts/run_state.py set --slug "{slug}" --path vault.export_identity --json --value "{export_identity_json}"
+python scripts/run_state.py set --slug "{slug}" --path vault.last_exported_at --value "{timestamp}"
+python scripts/run_state.py set --slug "{slug}" --path vault.last_error_code --json --value "null"
+python scripts/run_state.py set --slug "{slug}" --path vault.last_error_message --json --value "null"
+python scripts/run_state.py set --slug "{slug}" --path vault.status --value draft_prepared
+```
+
+Important:
+
+- draft mode is allowed before `fill-gaps` is complete
+- draft mode must not force `next_recommended_step` away from `rebuild-project` or `fill-gaps`
+
+### Step 4 - Finalize mode
+
+Use `finalize` mode only when:
+
+- `workspace.status = done`
+- `rebuild.status` is `done` or `skipped`
+- `fill_gaps.status` is `done` or `skipped`
+- `vault.status` is `draft_prepared`, `awaiting_confirmation`, or `stale`
+
+Before finalizing:
 
 ```bash
 python scripts/run_state.py set --slug "{slug}" --path vault.status --value awaiting_confirmation
@@ -107,67 +116,58 @@ python scripts/run_state.py set --slug "{slug}" --path next_recommended_step --v
 
 Show the user:
 
-1. the draft note
-2. the target note title
-3. the asset bundle destination
-4. the optional project mirror destination
-5. the daily-note update
+- note title
+- note path
+- bundle path
+- optional project bundle path
+- daily note path
+- summary of the draft content
 
-Ask for explicit confirmation.
-
-### Step 6 - Write to the Vault
-
-After confirmation:
+Only after explicit confirmation:
 
 ```bash
-python scripts/run_state.py set --slug "{slug}" --path vault.status --value in_progress
-```
-
-Use `scripts/vault_sync.py` to prepare support files:
-
-```bash
-python scripts/vault_sync.py export-run-support --slug "{slug}" --note-title "{note_title}" --project-slug "{project_slug}" --project-title "{project_title}" --main-insight "{main_insight}"
-```
-
-Write:
-
-- the research note to `{vault_path}/research/{note_title}.md`
-- source assets to `{vault_path}/research/assets/{source_type}/{slug}/`
-- optional project mirror to `{vault_path}/projects/{project_slug}/`
-- the daily-note update to `{vault_path}/daily-notes/{YYYY-MM-DD}.md`
-
-### Step 7 - Persist completion in state
-
-After a successful write:
-
-```bash
-python scripts/run_state.py set --slug "{slug}" --path vault.note_path --value "{vault_path}/research/{note_title}.md"
 python scripts/run_state.py set --slug "{slug}" --path vault.status --value done
 python scripts/run_state.py refresh-next --slug "{slug}"
+python scripts/run_state.py validate --slug "{slug}" --check-files
 ```
 
-If the write fails:
+### Step 5 - Error handling
 
-- set `vault.status = failed`
-- do not claim completion
+If `vault_sync.py` fails, set:
 
-### Step 8 - Report completion
+```bash
+python scripts/run_state.py set --slug "{slug}" --path vault.last_error_code --value "{error_code}"
+python scripts/run_state.py set --slug "{slug}" --path vault.last_error_message --value "{error_message}"
+python scripts/run_state.py set --slug "{slug}" --path vault.status --value failed
+```
+
+If the failure is a user/input problem such as note-path collision:
+
+```bash
+python scripts/run_state.py set --slug "{slug}" --path vault.last_error_code --value "{error_code}"
+python scripts/run_state.py set --slug "{slug}" --path vault.last_error_message --value "{error_message}"
+python scripts/run_state.py set --slug "{slug}" --path vault.status --value blocked_input
+```
+
+### Step 6 - Report
 
 ```text
-SAVE-TO-VAULT COMPLETE
+SAVE-TO-VAULT STATUS
 Slug: {slug}
-Research note: {vault_path}/research/{note_title}.md
-Asset bundle: {vault_path}/research/assets/{source_type}/{slug}/
-Project mirror: {vault_path}/projects/{project_slug}/
-Daily note updated: {vault_path}/daily-notes/{YYYY-MM-DD}.md
+Mode: {mode}
+Vault status: {vault_status}
+Note: {note_path}
+Bundle: {bundle_path}
+Project bundle: {project_bundle_path}
+Daily note: {daily_note_path}
 Next recommended step: {next_recommended_step}
 ```
 
 ## Quality Rules
 
-- never write to the Vault without confirmation
-- keep the research note readable and synthesis-first
-- keep raw files inside source bundles, not flat in `research/assets/`
-- prefer concept-first titles over source clickbait
-- include web validation when it materially improves trust
-- if a rebuild exists, mirror the readable files into `projects/`
+- `save-to-vault` is the single writer for `vault.*`
+- never finalize without explicit confirmation (unless `auto_mode` is active and no existing note would be overwritten)
+- drafts are allowed early, finals are not
+- note titles are concept-first, not source-clickbait-first
+- daily-note entries must be updated by marker, never blindly appended
+- project mirrors only exist when rebuild is actually done
