@@ -221,6 +221,11 @@ def load_state(slug: str) -> dict[str, Any]:
     return normalize_state(data)
 
 
+def save_state(slug: str, state: dict[str, Any]) -> None:
+    update_timestamp(state)
+    atomic_write_json(state_path(slug), state)
+
+
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:

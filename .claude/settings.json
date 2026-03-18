@@ -11,7 +11,12 @@
       "Bash(buzz:*)",
       "Bash(qmd:*)",
       "Bash(ffmpeg:*)",
-      "Bash(pandoc:*)"
+      "Bash(pandoc:*)",
+      "Bash(python -c \"from scripts.run_state import save_state, load_state, infer_next_step; print\\(''run_state imports: OK''\\)\")",
+      "Bash(python -c \"from app.config import load_state, save_state, vault_root; print\\(''app.config imports: OK''\\)\")",
+      "Bash(python -c \"from app.orchestrator import OrchestratorConfig, run; print\\(''app.orchestrator imports: OK''\\)\")",
+      "Bash(python lab.py --help)",
+      "Bash(python lab.py gsd2-vs-claude-code --dry-run --verbose)"
     ],
     "deny": []
   },
@@ -22,7 +27,7 @@
   },
   "customCommands": {
     "lab": {
-      "prompt": "Führe den 'lab-master' Skill für folgende Eingabe aus: "
+      "prompt": "Run the learning-lab pipeline via: python lab.py "
     }
   }
 }
