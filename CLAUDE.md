@@ -1,157 +1,175 @@
-# learning-lab
+# CLAUDE.md
 
-## What This Is
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-A skill-based learning pipeline for Claude Code. Give it a source (YouTube video, web page, PDF, local text file) and it produces a structured learning package. Optionally rebuild tutorial projects as MVPs. Final consolidated knowledge goes to The Vault.
+## Project Purpose
 
-**NotebookLM is the primary analysis engine.** It offloads heavy AI analysis to Google at zero token cost. Claude Code orchestrates the pipeline and formats outputs.
+A skill-based learning pipeline for Claude Code. Take any source (YouTube video, web page, PDF, local file) and produce a structured 7-file learning package in German, with final polished notes exported to The Vault (Obsidian).
 
-## Core Principle
+**Core principle:** Im Projekt wird gearbeitet. Im Vault wird Wissen gespeichert. (Work in the project. Store knowledge in The Vault.)
 
-> Im Projekt wird gearbeitet. Im Vault wird Wissen gespeichert.
+---
 
-- This project folder = workspace. Sources, drafts, temp files live here.
-- The Vault = final knowledge store. Only polished, consolidated output goes there.
-- The Vault path: `c:/Users/endri/Desktop/Claude-Projects/The Vault/`
+## Architecture Overview
 
-## Pipeline
+### Three-Skill Pipeline
 
-```
-Source (YouTube / web / PDF / text)
-    │
-    ▼
-[learn-source]
-    │  1. Detect & ingest source (yt-dlp / defuddle / Read)
-    │  2. Feed to NotebookLM (create → add-source → generate)
-    │  3. Structure NLM output into 6-file learning package
-    ▼
-workspace/{slug}/  (German, working drafts)
-    │
-    ├── [rebuild-project]  →  projects/{slug}/  (optional, for tutorials)
-    │
-    └── [save-to-vault]    →  The Vault/research/{Note-Title}.md  (English, final)
-                               The Vault/daily-notes/{date}.md  (append)
-```
+1. **`learn-source`** — Detect source type → ingest via yt-dlp/defuddle/Read tool → send to NotebookLM → structure output into 7-file learning package in `workspace/{slug}/`
+2. **`rebuild-project`** — Take a tutorial source and create a minimal MVP project in `projects/{slug}/`
+3. **`save-to-vault`** — Transform German workspace files into English research note and copy to The Vault (`The Vault/research/{Note-Title}.md`), plus append daily note
 
-## Skills
+### Key Separation
 
-| Skill | Trigger | Purpose |
-|-------|---------|---------|
-| `learn-source` | URL, file path, "lerne von X" | Ingest source → NLM analysis → 6-file learning package |
-| `rebuild-project` | "baue nach", "rebuild" | Create MVP from tutorial/project source |
-| `save-to-vault` | "speichere im Vault", "save to vault" | Export to The Vault in correct Obsidian format |
+- **Workspace** (`sources/`, `workspace/`, `projects/`) — German, working drafts, gitignored ephemeral files
+- **The Vault** (`The Vault/research/`, `The Vault/daily-notes/`) — English, final polished output, separate Obsidian vault (not tracked in this repo)
+- **The Vault path:** `c:/Users/endri/Desktop/Claude-Projects/The Vault/`
 
-## NotebookLM
+---
 
-Primary analysis engine. Zero token cost — compute runs on Google.
+## Working with Skills
 
-### CLI Commands
+### NotebookLM Is The Analysis Engine
 
-```bash
-notebooklm create --title "{title}"
-notebooklm add-source --notebook-id {id} --file {source_file}
-notebooklm generate --notebook-id {id} --type {deliverable} --output {path}
-```
-
-### Auth
-
-Run `notebooklm login` in a separate terminal (browser OAuth). Not inside Claude Code.
+- Zero token cost — all heavy computation runs on Google's servers
+- Accessible via `notebooklm` CLI (unofficial wrapper)
+- **Auth:** `notebooklm login` in a *separate terminal* (opens browser OAuth). Do not run inside Claude Code.
 
 ### Deliverable Types
 
-| Type | Time | Notes |
-|------|------|-------|
-| `study_guide` | <1 min | Default. Text analysis. |
-| `flashcards` | <1 min | PDF/JSON. Feeds into exercises. |
-| `infographic` | ~6 min | PNG/PDF. Visual summary. |
-| `mindmap` | ~6 min | PNG/SVG. Topic relationships. |
-| `podcast` | ~8 min | MP3. AI audio discussion. |
-| `slides` | ~15 min | PDF. Full presentation. |
+| Type | Time | Best For |
+|------|------|----------|
+| `study_guide` | <1 min | Text summaries (default) |
+| `flashcards` | <1 min | Q&A and exercises |
+| `infographic` | ~6 min | Visual summaries |
+| `mindmap` | ~6 min | Topic relationships |
+| `podcast` | ~8 min | Audio discussions |
+| `slides` | ~15 min | Presentation decks |
 
-## Source Intake
+### Source Type Detection
 
-| Source Type | Method |
-|-------------|--------|
-| YouTube URL | `yt-dlp` for metadata + transcript (SRT → clean text) |
-| Web page URL | `defuddle parse <url> --md` for clean markdown |
-| PDF file | Claude Code Read tool |
-| Local .md/.txt | Claude Code Read tool |
+- **YouTube:** `https://youtube.com` or `https://youtu.be` → `yt-dlp` extracts transcript (SRT → plaintext)
+- **Web page:** `http(s)://` (not YouTube) → `defuddle parse <url> --md`
+- **PDF:** `.pdf` extension → Claude Code Read tool → summarize
+- **Local file:** `.md`, `.txt` → Claude Code Read tool
 
-## Repository Layout
+---
+
+## 7-File Learning Package Format
+
+Each `workspace/{slug}/` contains:
+
+| File | Purpose | Language |
+|------|---------|----------|
+| `00_zusammenfassung.md` | Executive summary + core thesis | German |
+| `01_kernkonzepte.md` | Concepts with definitions | German |
+| `02_schritt_fuer_schritt.md` | Step-by-step walkthrough | German |
+| `03_uebungen.md` | Flashcards + exercises (not exported to Vault) | German |
+| `04_projekt_rebuild.md` | Rebuild blueprint (only for tutorials) | German |
+| `05_offene_fragen.md` | Open questions, gaps, uncertainties | German |
+| `06_notebooklm_artefakte.md` | File paths to NLM outputs + notebook metadata | German |
+
+---
+
+## The Vault Export Format
+
+When exporting via `save-to-vault`:
+
+### Research Note
+
+- Location: `The Vault/research/{Note-Title}.md`
+- **No YAML frontmatter** — use inline header blocks (`> Research generated:`, `> Source:`)
+- Language: English
+- Structure:
+  ```md
+  # {Title}
+  > Research generated: YYYY-MM-DD
+  > Source: [Label](URL)
+
+  ## Core Thesis
+  ## Key Takeaways
+  ## Executive Summary
+  ## Practical Implications For My Workflow
+  ## High-Signal Concepts To Revisit
+  ## Open Questions
+  ## Source Notes
+  ```
+- All internal references use wiki-links: `[[Note-Title]]`
+- Tone: analytical, first-person, practical-implications-focused
+
+### Assets
+
+- Transcripts: `The Vault/research/assets/{slug}-transcript.txt`
+- NLM outputs: `The Vault/research/assets/{slug}-{type}.{ext}`
+- **Important:** Wiki-link references use intentional misspelling: `[[reserch/assets/...]]` (not `research`)
+
+### Daily Note
+
+- Location: `The Vault/daily-notes/{YYYY-MM-DD}.md`
+- Append new entries under `## Research` section
+
+---
+
+## Permissions & Safety
+
+### Allowed Tools
+
+Per `.claude/settings.json`:
+- `Bash(yt-dlp:*)`, `Bash(notebooklm:*)`, `Bash(defuddle:*)`
+- `Bash(python:*)`, `Bash(python3:*)`
+
+### Safety Rules
+
+- Never auto-delete `sources/` or `workspace/` files — always ask first
+- Never commit to git: `.env`, `vault/**`, NotebookLM credentials, secrets
+- Write to The Vault only with explicit user confirmation (via `save-to-vault` skill)
+- Distinguish strictly: facts from source vs. own interpretation/conclusions
+- Mark uncertainties explicitly as "Unsicherheit" in German workspace files
+- No invented APIs, tools, or features — source-faithful first
+
+---
+
+## Common Tasks
+
+### Ingest a Source
 
 ```
-learning-lab/
-├── sources/        # Raw ingested material (transcripts, NLM output)
-├── workspace/      # Learning packages (6 files per source, German)
-├── projects/       # MVP project rebuilds
-├── docs/           # Conventions and references
-├── .claude/
-│   ├── settings.json
-│   └── skills/     # learn-source, rebuild-project, save-to-vault
+User provides URL or file → trigger `learn-source`
+→ Ask which NLM deliverable (default: study_guide)
+→ Auto-create workspace/{slug}/
+→ Detect source type
+→ Extract transcript / markdown
+→ Create NLM notebook
+→ Add source + generate deliverable
+→ Structure into 7-file package
+→ Report completion
 ```
 
-## Language
+### Export to The Vault
 
-- **Workspace files** (learning packages): German
-- **Vault research notes**: English (matches existing Vault tone)
-- **Config and docs**: English
-
-## Working File Policy
-
-- `sources/` and `workspace/` contain working files
-- Never auto-delete. Always ask before cleanup.
-- `projects/` persists — rebuilds have ongoing value.
-
-## The Vault Integration
-
-| Target | Path | Format |
-|--------|------|--------|
-| Research note | `The Vault/research/{Note-Title}.md` | Inline header block, no YAML, wiki-links |
-| Source asset | `The Vault/research/assets/{slug}-transcript.txt` | Plain text |
-| NLM deliverables | `The Vault/research/assets/{slug}-{type}.{ext}` | PNG/PDF/MP3/JSON |
-| Daily note | `The Vault/daily-notes/{YYYY-MM-DD}.md` | Append under `## Research` |
-
-**Important:** Write files to `research/` (real disk path). Use `[[reserch/assets/...]]` in wiki-link references inside note content.
-
-## Vault Note Format
-
-```md
-# {Title}
-
-> Research generated: YYYY-MM-DD
-> Source: [Label](URL)
-
-## Core Thesis
-## Key Takeaways
-## Executive Summary
-## Practical Implications For My Workflow
-## High-Signal Concepts To Revisit
-## Open Questions
-## Source Notes
+```
+User: "save to vault {slug}"
+→ Read workspace files
+→ Check Vault conventions (CLAUDE.md)
+→ Transform German → English
+→ Create research note with inline headers
+→ Copy assets to research/assets/
+→ Update daily note
+→ Ask for confirmation before writing
 ```
 
-- No YAML frontmatter — use inline header blocks
-- Wiki-link syntax `[[...]]` for all internal references
-- Analytical, first-person, practical-implications-focused tone
+---
 
-## Global Skills Available
+## Language Convention
 
-These are installed globally (`~/.claude/skills/`) and should be used, not duplicated:
-- `obsidian-markdown`: wiki-links, callouts, embeds, properties
-- `defuddle`: extract clean markdown from web pages
+- **Workspace files:** German (working drafts, closer to source material)
+- **Vault research notes:** English (final, polished, analytical)
+- **Config & docs:** English
+- Workspace file quality rule: source-faithful first, interpretation second
 
-## Safety Rules
+---
 
-- Never write to The Vault without explicit user confirmation via save-to-vault
-- Never auto-delete sources or workspace files
-- Never commit secrets, .env files, or vault content to git
-- Distinguish strictly between facts from the source and own conclusions
-- Mark uncertainties explicitly
+## Related Projects
 
-## Relation to NLM+Obsidian
-
-Same analysis engine (NotebookLM), different architecture:
-- No Python `src/` pipeline — Claude Code orchestrates via skills
-- The Vault is a separate target, not the project folder
-- Extended source types (web via defuddle, PDF, local files)
-- Structured 6-file learning package instead of single research note
+This project complements two related systems:
+- **NLM+Obsidian** — same analysis engine (NotebookLM), but builds the vault inside the repo with Python orchestration
+- **agentic-lab** — a note-capture pipeline using n8n + Claude Code, separate Obsidian vault 
