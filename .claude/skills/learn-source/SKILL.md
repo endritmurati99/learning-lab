@@ -1,259 +1,313 @@
 ---
 name: learn-source
-description: Analyze a source (YouTube URL, web page URL, PDF path, or local text file) and create a structured 8-file learning package. Uses NotebookLM as the primary analysis engine and Claude Code for structuring the output. Triggers when the user says "lerne von X", "learn from X", provides a URL or file path to learn from, or asks to analyze a source for learning purposes. Supports adding multiple sources to an existing topic.
+description: Analyze a source (YouTube URL, web page URL, PDF path, or local text file) and create a structured 8-file learning package. Uses NotebookLM as the primary analysis engine and Claude Code for structuring the output. Triggers when the user says "lerne von X", "learn from X", provides a URL or file path to learn from, or asks to analyze a source for learning purposes. Supports resuming an existing run via `sources/{slug}/run.json`.
 ---
 
 # Learn Source
 
-Ingests a source, feeds it to NotebookLM for analysis, and produces a structured 8-file learning package in German. NotebookLM handles the heavy analysis at zero token cost. Claude Code orchestrates and structures the output. Supports multi-source mode: adding new sources to an existing slug's notebook.
+Ingest a source, feed it to NotebookLM, and produce a structured 8-file learning package in German.
+NotebookLM handles the heavy analysis. Claude Code orchestrates the workflow and keeps state in `sources/{slug}/run.json`.
 
 ## Prerequisites
 
-- `yt-dlp` installed (`pip install yt-dlp`) — for YouTube sources
-- `buzz` installed (`winget install Buzz`) — for offline Whisper transcription
-- `rtk` installed — for token-efficient file reading
-- `defuddle` installed (`npm install -g defuddle`) — for web page sources
+- `python` available for `scripts/run_state.py`
+- `rtk` available for token-efficient reading
+- `yt-dlp` for YouTube sources
+- `defuddle` for web page sources
 - `notebooklm` CLI installed and authenticated
+- `buzz` available if YouTube subtitles are missing and audio transcription fallback is needed
+- `ffmpeg` strongly recommended for audio workflows
+- `pandoc` optional for PDF compaction
 
-## Inputs (ask user if missing)
+## Inputs
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `source` | required | YouTube URL, web page URL, PDF path, or local file path |
 | `deliverable` | `study_guide` | NotebookLM deliverable type: `study_guide`, `flashcards`, `infographic`, `mindmap`, `podcast`, `slides` |
-| `topic` | auto-derived from source title | Short topic label used for folder naming |
+| `topic` | auto-derived | Short topic label used for folder naming |
 
 ## Execution Steps
 
-### Step 1 — Detect source type
+### Step 1 - Detect source type and slug
 
-Determine the source type from the input:
-- **YouTube:** URL contains `youtube.com` or `youtu.be`
-- **Web page:** URL starts with `http(s)://` and is not YouTube
-- **PDF:** Path ends in `.pdf`
-- **Local file:** Path to `.md`, `.txt`, or other text file
+Determine the source type:
 
-Create a sanitized slug from the topic for folder naming (lowercase, hyphens, no special chars).
+- YouTube: URL contains `youtube.com` or `youtu.be`
+- Web page: URL starts with `http(s)://` and is not YouTube
+- PDF: path ends in `.pdf`
+- Local file: local `.md`, `.txt`, or other text-like file
 
-**Multi-source check:** If `sources/{slug}/` already exists, this is an additional source for an existing topic. Read `sources/{slug}/notebook_id.txt` to get the existing NLM notebook ID. Skip notebook creation in Step 3 and add the new source to the existing notebook instead.
+Create a sanitized slug from the topic:
 
-### Step 2 — Ingest source
+- lowercase
+- hyphenated
+- no special characters
+
+If `sources/{slug}/run.json` already exists, this is a resume or multi-source update.
+Validate the state file before doing more work:
+
+```bash
+python scripts/run_state.py validate --slug "{slug}"
+```
+
+### Step 2 - Staged preflight and state initialization
+
+Run staged preflight instead of a single global all-or-nothing gate.
+
+Core:
+
+- required: `python`
+- strongly preferred: `rtk`
+
+Source-type checks:
+
+- YouTube: `yt-dlp`
+- Web page: `defuddle`
+- PDF: `pandoc` if using PDF-to-Markdown compaction
+
+Stage-type checks:
+
+- NotebookLM generation: `notebooklm`
+- Audio transcription fallback: `buzz`, ideally `ffmpeg`
+
+If a required dependency for the chosen source or next stage is missing:
+
+- stop before continuing
+- mark the affected stage as `blocked` or `failed`
+- add a warning to `run.json`
+
+If `run.json` does not exist yet:
+
+```bash
+python scripts/run_state.py init --slug "{slug}" --source-type "{source_type}" --input "{source}" --title "{topic}"
+```
+
+Mark the ingest stage as active:
+
+```bash
+python scripts/run_state.py set --slug "{slug}" --path ingest.status --value in_progress
+python scripts/run_state.py set --slug "{slug}" --path next_recommended_step --value ingest
+```
+
+### Step 3 - Ingest source
+
+Create `sources/{slug}/` if needed.
+
+Important rule:
+
+- data files keep data only
+- warnings and stderr go to `.log` files
 
 #### YouTube
 
-Search and collect metadata:
+Collect metadata:
 
 ```bash
-yt-dlp "{youtube_url}" \
-  --skip-download \
-  --print "%(id)s\t%(title)s\t%(webpage_url)s\t%(view_count)s\t%(upload_date)s" \
-  --no-playlist \
-  > sources/{slug}/metadata.tsv
+yt-dlp "{youtube_url}" --skip-download --print "%(id)s\t%(title)s\t%(webpage_url)s\t%(view_count)s\t%(upload_date)s" --no-playlist > sources/{slug}/metadata.tsv 2>> sources/{slug}/ingest.log
 ```
 
-Download auto-generated transcripts:
+Download subtitles:
 
 ```bash
-yt-dlp "{youtube_url}" \
-  --skip-download \
-  --write-auto-sub \
-  --write-sub \
-  --sub-lang en \
-  --sub-format ttml \
-  --convert-subs srt \
-  --no-playlist \
-  -o "sources/{slug}/%(id)s.%(ext)s"
+yt-dlp "{youtube_url}" --skip-download --write-auto-sub --write-sub --sub-lang en --sub-format ttml --convert-subs srt --no-playlist -o "sources/{slug}/%(id)s.%(ext)s" 2>> sources/{slug}/ingest.log
 ```
 
-If no transcripts are available, download the audio and use Buzz for 100% local, token-free transcription:
+If no subtitles exist, fall back to local audio transcription:
+
 ```bash
-yt-dlp "{youtube_url}" -x --audio-format mp3 -o "sources/{slug}/audio.%(ext)s"
+yt-dlp "{youtube_url}" -x --audio-format mp3 -o "sources/{slug}/audio.%(ext)s" 2>> sources/{slug}/ingest.log
 buzz add --task transcribe --model medium --output-format srt "sources/{slug}/audio.mp3"
 ```
 
-Download description, metadata JSON, and top comments for extra context:
+Download description and extra context:
 
 ```bash
-yt-dlp "{youtube_url}" \
-  --write-description \
-  --write-info-json \
-  --get-comments \
-  --max-comments 20 \
-  --skip-download \
-  -o "sources/{slug}/extra_context.%(ext)s"
+yt-dlp "{youtube_url}" --write-description --write-info-json --get-comments --max-comments 20 --skip-download -o "sources/{slug}/extra_context.%(ext)s" 2>> sources/{slug}/ingest.log
 ```
 
-Clean SRT to plain text using this Python snippet:
-
-```python
-import re, pathlib
-
-def clean_srt(srt_path: str) -> str:
-    path = pathlib.Path(srt_path)
-    if not path.exists(): return ""
-    text = path.read_text(encoding="utf-8", errors="ignore")
-    # Remove index lines, timestamps, and HTML tags in one pass
-    text = re.sub(r'(\d+\n)?\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}\n', '', text)
-    text = re.sub(r'<[^>]*>', '', text)
-    # Efficient line deduplication (preserves order)
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-    cleaned = []
-    for i, line in enumerate(lines):
-        if i == 0 or line != lines[i-1]:
-            cleaned.append(line)
-    return ' '.join(cleaned)
-```
-
-Save clean transcripts as `sources/{slug}/{video_id}.txt`.
+Clean SRT to plain text and save `sources/{slug}/{video_id}.txt`.
 
 #### Web page
 
 ```bash
-defuddle parse "{url}" --md > sources/{slug}/content.md
-defuddle parse "{url}" -p title > sources/{slug}/title.txt
+defuddle parse "{url}" --md > sources/{slug}/content.md 2>> sources/{slug}/ingest.log
+defuddle parse "{url}" -p title > sources/{slug}/title.txt 2>> sources/{slug}/ingest.log
 ```
 
-If defuddle is not installed, fall back to the WebFetch tool.
+If `defuddle` is unavailable, fall back to a web fetch / read flow and record that fallback in warnings.
 
 #### PDF
 
-Use `pandoc` if available to convert PDF strictly to compact Markdown, saving up to 50% tokens:
+Preferred if `pandoc` is available:
+
 ```bash
 pandoc "{pdf_path}" -t markdown -o sources/{slug}/content.md
 ```
-If Pandoc fails or is not installed, use Claude Code's Read tool. Save a text summary to `sources/{slug}/content.txt`.
+
+If `pandoc` is unavailable or fails, use the Read tool and save a text summary to `sources/{slug}/content.txt`.
 
 #### Local file
 
-When reading the local file (`.md`, `.txt`), prefer `rtk read` instead of `cat` or raw tools to drastically reduce token usage:
+Prefer `rtk read` when reading local files for analysis.
+Copy or reference the local file in `sources/{slug}/`.
+
+After ingest artifacts exist, record them in state:
+
 ```bash
-rtk read "{file_path}"
+python scripts/run_state.py append --slug "{slug}" --path ingest.artifacts --value metadata.tsv
+python scripts/run_state.py append --slug "{slug}" --path ingest.log_files --value ingest.log
+python scripts/run_state.py set --slug "{slug}" --path ingest.status --value done
+python scripts/run_state.py set --slug "{slug}" --path notebooklm.status --value in_progress
+python scripts/run_state.py set --slug "{slug}" --path next_recommended_step --value notebooklm
 ```
-Copy or reference the file in `sources/{slug}/`.
 
-### Step 3 — Send to NotebookLM
+Only append artifacts that actually exist.
 
-**New topic (no existing slug):** Create a notebook and add all source files:
+### Step 4 - Send source to NotebookLM
+
+If `sources/{slug}/notebook_id.txt` already exists, reuse it.
+Otherwise create a new notebook:
 
 ```bash
 notebooklm create --title "Learn: {topic}"
-# Save the returned notebook_id to sources/{slug}/notebook_id.txt
 ```
 
-**Existing topic (slug already exists):** Read the notebook ID:
+Persist the notebook id in both places:
 
 ```bash
-set /p notebook_id=<sources/{slug}/notebook_id.txt
+python scripts/run_state.py persist-notebook-id --slug "{slug}" --notebook-id "{notebook_id}"
 ```
 
-Add each source file:
+Add source files:
 
 ```bash
-notebooklm add-source \
-  --notebook-id {notebook_id} \
-  --file sources/{slug}/{source_file}
+notebooklm add-source --notebook-id {notebook_id} --file sources/{slug}/{source_file}
 ```
 
 Generate the requested deliverable:
 
 ```bash
-notebooklm generate \
-  --notebook-id {notebook_id} \
-  --type {deliverable} \
-  --instructions "Identify and explicitly list any hidden assumptions the author makes. Flag unstated prerequisites, implicit biases, and conclusions that lack direct evidence." \
-  --output sources/{slug}/nlm-{deliverable}
+notebooklm generate --notebook-id {notebook_id} --type {deliverable} --instructions "Identify hidden assumptions, unstated prerequisites, implicit biases, and conclusions that lack direct evidence." --output sources/{slug}/nlm-{deliverable}
 ```
 
-> **Note:** The `--instructions` flag passes custom prompting to NLM. If the CLI version does not support it, omit it — the generation will still work without custom instructions.
+If the CLI does not support `--instructions`, omit it and continue.
 
-Expected generation times:
-- `study_guide`: < 1 minute
-- `flashcards`: < 1 minute
-- `infographic`: ~6 minutes
-- `mindmap`: ~6 minutes
-- `podcast`: ~8 minutes
-- `slides`: ~15 minutes
+Record successful NotebookLM output:
 
-Wait for completion. Do not cancel — the job runs on Google's servers at zero token cost.
-
-Save all NLM output to `sources/{slug}/`.
-
-### Step 4 — Structure learning package
-
-Read the NLM output plus the original source material. **CRITICAL:** Use `rtk read` to read the files to filter out boilerplate and save context tokens!
-
-Create 8 files in `workspace/{slug}/`:
-
-| File | Content | Source |
-|------|---------|--------|
-| `00_zusammenfassung.md` | Executive summary | NLM study guide + source |
-| `01_kernkonzepte.md` | Core concepts with definitions and context | NLM analysis |
-| `02_schritt_fuer_schritt.md` | Step-by-step walkthrough | Source material |
-| `03_uebungen.md` | Exercises and flashcards | NLM flashcards if generated |
-| `04_projekt_rebuild.md` | Project rebuild blueprint | Only if source is tutorial/project |
-| `05_offene_fragen.md` | Open questions and gaps | Claude analysis of NLM output |
-| `06_notebooklm_artefakte.md` | Links to all NLM deliverables | File paths |
-| `07_logik_check.md` | Bias analysis and missing perspectives | Adversarial Claude analysis |
-
-**For multi-source mode:** Merge new material into existing workspace files rather than overwriting. Append new concepts to `01_kernkonzepte.md`, add new questions to `05_offene_fragen.md`, etc.
-
-**Language:** All workspace files in German.
-
-**Quality rules:**
-- Distinguish strictly between facts from the source and own conclusions
-- Mark uncertainties explicitly as `Unsicherheit`
-- No invented APIs, tools, or features
-- Source-faithful first, interpretation second
-
-### Step 4b — Adversarial logic check
-
-After structuring the learning package, run an adversarial analysis of the NLM output and source material. Write `workspace/{slug}/07_logik_check.md`:
-
-```markdown
-# Logik-Check: {topic}
-
-## Bestätigungsfehler (Confirmation Bias)
-{List any claims the source presents as fact without evidence}
-{Note where the NLM summary amplified the source's bias}
-
-## Fehlende Gegenperspektiven
-{Counter-arguments or alternative viewpoints not addressed in the source}
-
-## Unausgesprochene Annahmen
-{Assumptions the author makes implicitly without stating them}
-
-## Übertreibungen / Vereinfachungen
-{Claims that are overstated or oversimplified}
-
-## Gesamtbewertung
-{1-2 sentence assessment of how trustworthy and balanced the source is}
+```bash
+python scripts/run_state.py append --slug "{slug}" --path notebooklm.deliverables --value "{deliverable}"
+python scripts/run_state.py append --slug "{slug}" --path notebooklm.artifacts --value "nlm-{deliverable}"
+python scripts/run_state.py set --slug "{slug}" --path notebooklm.status --value done
+python scripts/run_state.py set --slug "{slug}" --path workspace.status --value in_progress
+python scripts/run_state.py set --slug "{slug}" --path next_recommended_step --value workspace
 ```
 
-This step is critical for preventing uncritical knowledge absorption. The analysis should be honest and specific — vague "could be biased" statements are not useful.
+### Step 5 - Structure the learning package
 
-### Step 5 — Report completion
+Read source material plus NotebookLM output.
+Prefer `rtk read` for local reading.
 
+Create all eight files in `workspace/{slug}/`:
+
+| File | Content |
+|------|---------|
+| `00_zusammenfassung.md` | Executive summary and core thesis |
+| `01_kernkonzepte.md` | Core concepts with definitions and context |
+| `02_schritt_fuer_schritt.md` | Step-by-step walkthrough |
+| `03_uebungen.md` | Exercises and flashcards |
+| `04_projekt_rebuild.md` | Always present; explicitly mark whether rebuild is applicable |
+| `05_offene_fragen.md` | Open questions and gaps |
+| `06_notebooklm_artefakte.md` | Notebook id plus deliverable paths |
+| `07_logik_check.md` | Adversarial logic and bias check |
+
+`04_projekt_rebuild.md` must never silently disappear.
+Its content should clearly say one of:
+
+- rebuildable now
+- not applicable
+- ready for rebuild later
+
+Multi-source mode:
+
+- merge into existing workspace files
+- do not overwrite blindly
+- keep earlier insights unless contradicted by new material
+
+Language rules:
+
+- workspace files stay in German
+- source-faithful first
+- interpretation second
+- mark uncertainties as `Unsicherheit`
+
+### Step 6 - Logic check, workspace sync, and next-step state
+
+`07_logik_check.md` is mandatory.
+It must cover:
+
+- confirmation bias
+- missing counter-perspectives
+- unstated assumptions
+- exaggerations or simplifications
+- overall trust assessment
+
+After writing workspace files, sync the workspace state:
+
+```bash
+python scripts/run_state.py sync-workspace --slug "{slug}"
+python scripts/run_state.py set --slug "{slug}" --path workspace.status --value done
 ```
+
+Set tutorial / rebuild state explicitly:
+
+- if the source is tutorial-like or project-like:
+  - `workspace.is_tutorial = true`
+  - `rebuild.status = not_started`
+  - `rebuild.reason = null`
+  - `next_recommended_step = rebuild-project`
+- otherwise:
+  - `workspace.is_tutorial = false`
+  - `rebuild.status = skipped`
+  - `rebuild.reason = not_applicable`
+  - `next_recommended_step = fill-gaps`
+
+Then validate the full local state:
+
+```bash
+python scripts/run_state.py validate --slug "{slug}" --check-files
+```
+
+### Step 7 - Report completion
+
+Report:
+
+```text
 LEARN-SOURCE COMPLETE
 Topic: {topic}
-Source: {source_type} — {source}
-NLM deliverable: {deliverable} → sources/{slug}/nlm-{deliverable}.*
-Learning package: workspace/{slug}/ (8 files)
-
-Next steps:
-- /rebuild-project {slug}  (if this was a tutorial/project source)
-- /save-to-vault {slug}    (to export to The Vault)
+Source: {source_type} - {source}
+NLM deliverable: {deliverable}
+Learning package: workspace/{slug}/
+State file: sources/{slug}/run.json
+Next recommended step: {next_recommended_step}
 ```
+
+## Quality Rules
+
+- no invented APIs, tools, or features
+- keep `metadata.tsv` data-only
+- write warnings to `.log` files or `run.json`
+- keep `run.json` and the filesystem in sync
+- persist `notebook_id.txt` every time
+- all eight workspace files are required
 
 ## Common Issues
 
 | Problem | Fix |
 |---------|-----|
-| `yt-dlp: command not found` | `pip install yt-dlp` or `pip install -U yt-dlp` |
-| No transcripts available | Some videos disable captions — skip and use video title/description |
-| `notebooklm: command not found` | `pip install notebooklm` |
-| NLM auth expired | Run `notebooklm login` in a separate terminal |
-| `defuddle: command not found` | `npm install -g defuddle` or use WebFetch as fallback |
-| Source too large for NLM | Split into chunks < 500KB each |
-| NLM generation timeout | Long-form deliverables take up to 15 min — wait |
-| Rate limiting (yt-dlp) | Add `--sleep-interval 2 --max-sleep-interval 5` |
+| `yt-dlp` missing | Install or block YouTube ingestion before any further step |
+| `notebooklm` missing | Stop before generation and mark NotebookLM stage as blocked |
+| `buzz` missing | Only matters if subtitle fallback is needed |
+| `pandoc` missing | Fall back to Read tool for PDFs |
+| `run.json` invalid | Repair state with `scripts/run_state.py` before continuing |
+| Workspace incomplete | Rebuild missing files and rerun `sync-workspace` plus `validate --check-files` |

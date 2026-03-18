@@ -1,198 +1,173 @@
 ---
 name: save-to-vault
-description: Transfer a completed learning package from workspace to The Vault (Obsidian) in the correct format. Converts German workspace files into a single English research note matching The Vault's conventions, copies assets, and updates the daily note. Use when the user says "speichere im Vault", "save to vault", "ab in den Vault", or wants to persist learning results to Obsidian.
+description: Transfer a completed or near-complete learning package into The Vault using source bundles, project mirrors, and a concept-first research note title. Tracks draft/export progress in `run.json`.
 ---
 
 # Save to Vault
 
-Exports a completed learning package from `workspace/{slug}/` to The Vault as a properly formatted Obsidian research note. Handles format transformation (German workspace → English Vault), asset copying, and daily note updates.
+`save-to-vault` exports an existing learning package into The Vault as:
+
+- a research note in `research/`
+- a source-specific asset bundle in `research/assets/{source_type}/{slug}/`
+- an optional project mirror in `projects/{project-slug}/`
+- a daily-note update
+
+This step always stops for explicit confirmation before the final write.
 
 ## Prerequisites
 
-- A completed learning package in `workspace/{slug}/` (created by `learn-source`)
-- The Vault must exist at the path configured in `.claude/settings.json` → `vault_path`
+- `sources/{slug}/run.json` exists
+- `workspace/{slug}/` exists and is complete enough to summarize
+- the Vault exists at `vault_path`
+- `docs/vault-format-reference.md` is the current source of truth
 
-## Inputs (ask user if missing)
+## Inputs
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `slug` | required | The slug of the learning package in `workspace/` |
-| `note_title` | auto-derived from slug | Title for the Vault research note |
+| `slug` | required | The learning-package slug |
+| `note_title` | concept-first auto-suggestion | Human-facing Vault note title |
+| `project_slug` | optional | Vault folder slug for mirrored rebuild output |
 
 ## Execution Steps
 
-### Step 1 — Resolve Vault path and verify prerequisites
+### Step 1 - Validate state and local files
 
-Read `vault_path` from `.claude/settings.json`. If not set, fall back to `c:/Users/endri/Desktop/Claude-Projects/The Vault/`.
+Before doing any Vault work:
 
-Check that `workspace/{slug}/` exists with at least `00_zusammenfassung.md`. If not, tell the user to run `learn-source` first.
+```bash
+python scripts/run_state.py validate --slug "{slug}" --check-files
+python scripts/run_state.py refresh-next --slug "{slug}"
+python scripts/run_state.py summary --slug "{slug}"
+```
 
-Check that The Vault exists at the resolved `{vault_path}`.
+Resolve `vault_path` from `.claude/settings.json`.
+Confirm that the Vault exists.
 
-### Step 2 — Check Vault & Conventions
+### Step 2 - Check Vault conventions and existing notes
 
-Use the `qmd search "{topic}"` command to semantically check if a note on this exact topic already exists.
+Read:
 
-Read `{vault_path}/CLAUDE.md` to confirm current conventions are still in effect. Also read `docs/vault-format-reference.md` in this project for the note template.
+- `docs/vault-format-reference.md`
+- `{vault_path}/CLAUDE.md` if available
 
-### Step 3 — Read workspace files
+Check whether a closely related research note already exists.
 
-Read all files in `workspace/{slug}/`:
+Title rule:
+
+- do not blindly reuse clicky source titles
+- prefer a calmer, concept-first note title
+- example: `Reusable Claude Skills for Agent Workflows`
+
+### Step 3 - Read workspace, source metadata, and external research
+
+Read the workspace package plus source metadata from `sources/{slug}/`.
+
+Relevant files:
+
 - `00_zusammenfassung.md`
 - `01_kernkonzepte.md`
 - `02_schritt_fuer_schritt.md`
-- `03_uebungen.md` (will not be exported)
-- `04_projekt_rebuild.md` (if exists)
+- `04_projekt_rebuild.md`
 - `05_offene_fragen.md`
-- `06_notebooklm_artefakte.md` (if exists)
-- `07_logik_check.md` (if exists)
+- `06_notebooklm_artefakte.md`
+- `07_logik_check.md`
+- `metadata.tsv`
+- available `nlm-*` files
 
-Also read `sources/{slug}/metadata.tsv` or similar for source metadata.
+If `fill-gaps` has already been run or official docs / web research were used, include them as `External Validation`.
 
-### Step 4 — Transform to Vault format
+### Step 4 - Build the Vault draft
 
-Convert German workspace content into a single English research note. The note must be analytical, first-person, and practical-implications-focused.
+Create a draft research note in English with:
 
-**Mapping:**
+- YAML frontmatter
+- `transcript`
+- `asset_bundle`
+- optional `project_bundle`
+- core thesis
+- key takeaways
+- executive summary
+- practical implications
+- high-signal concepts
+- external validation
+- open questions
+- source notes
 
-| Workspace File | Vault Section |
-|----------------|---------------|
-| `00_zusammenfassung.md` | **Core Thesis** (1-2 paragraph synthesis) + **Executive Summary** (longer narrative) |
-| `01_kernkonzepte.md` | **Key Takeaways** (bullet points with `[[wiki-links]]`) + **High-Signal Concepts To Revisit** (each concept as `[[wiki-link]]`). *Note: Utilize the `obsidian-markdown` skill to generate appropriate callouts for important concepts.* |
-| `02_schritt_fuer_schritt.md` | Folded into **Executive Summary** if relevant, otherwise omitted |
-| `03_uebungen.md` | **Not exported** — stays in workspace only |
-| `04_projekt_rebuild.md` | **Practical Implications For My Workflow** (if exists) |
-| `05_offene_fragen.md` | **Open Questions** |
-| `06_notebooklm_artefakte.md` | Referenced in **Source Notes** section |
-| `07_logik_check.md` | Folded into **Open Questions** or a **Critical Analysis** subsection |
+The note should be the synthesis layer, not a dump of raw artifacts.
 
-### Step 5 — Generate the research note
+### Step 5 - Enter confirmation boundary
 
-Write the note to `{vault_path}/research/{Note-Title}.md` using this exact structure:
+Before writing anything to the Vault:
 
-```markdown
----
-research_date: {YYYY-MM-DD}
-source_url: "{URL or path}"
-source_label: "{Source Label}"
-tags:
-  - research
-  - {topic-tag}
-transcript: "[[research/assets/{slug}-transcript.txt]]"
----
-
-# {Title}
-
-## Core Thesis
-
-{Synthesized from 00_zusammenfassung — central argument in 1-2 paragraphs}
-
-## Key Takeaways
-
-{Bullet points from 01_kernkonzepte, each with [[wiki-links]] to concepts}
-
-## Executive Summary
-
-{Longer narrative from 00_zusammenfassung + 02_schritt_fuer_schritt}
-
-## Practical Implications For My Workflow
-
-{From 04_projekt_rebuild if exists, otherwise derive from 01_kernkonzepte}
-
-## High-Signal Concepts To Revisit
-
-{Each core concept as a [[wiki-link]], extracted from 01_kernkonzepte}
-
-## Open Questions
-
-{From 05_offene_fragen + critical analysis from 07_logik_check if exists}
-
-## Source Notes
-
-{Provenance: source type, capture date, method used}
-{List of NLM deliverables generated, if any}
+```bash
+python scripts/run_state.py set --slug "{slug}" --path vault.status --value awaiting_confirmation
+python scripts/run_state.py set --slug "{slug}" --path next_recommended_step --value save-to-vault
 ```
 
-**Critical format rules:**
-- **YAML Properties (frontmatter)** for metadata — `research_date`, `source_url`, `source_label`, `tags`, `transcript`
-- **Wiki-link syntax** `[[...]]` for all internal concept references
-- **Asset paths in wiki-links:** use `[[research/assets/...]]`
-- **Asset paths on disk:** write to `research/assets/`
-- **Language:** English
-- **Tone:** analytical, first-person, practical-implications-focused
+Show the user:
 
-### Step 6 — Verify backlinks against existing Vault notes
+1. the draft note
+2. the target note title
+3. the asset bundle destination
+4. the optional project mirror destination
+5. the daily-note update
 
-Instead of manually scanning directories, use semantic vector search via `qmd`.
+Ask for explicit confirmation.
 
-**Critical Backlink Strategy:**
-Cross-reference every concept from `workspace/{slug}/01_kernkonzepte.md` against The Vault using:
-`qmd search "{Concept}"`
+### Step 6 - Write to the Vault
 
-Since `qmd` is semantic, it natively understands synonyms and variations, solving the duplicate-note problem. Append limits if necessary or let QMD return its top semantic matches.
+After confirmation:
 
-**If the concept already has its own note in The Vault, it MUST be wiki-linked as `[[Existing-Note-Title]]` in the research note.** Do not create orphan references when a linkable target exists.
-
-Log any new concepts that do not yet have Vault notes — these are candidates for future standalone notes.
-
-### Step 7 — Copy assets
-
-Copy source assets to The Vault:
-
-- Transcript: `sources/{slug}/*.txt` → `{vault_path}/research/assets/{slug}-transcript.txt`
-- NLM deliverables: `sources/{slug}/nlm-*` → `{vault_path}/research/assets/{slug}-{type}.{ext}`
-
-### Step 8 — Update daily note
-
-Check if `{vault_path}/daily-notes/{YYYY-MM-DD}.md` exists.
-
-**If it exists:** Append under the `## Research` section:
-
-```markdown
-- Added [[{Note-Title}]]
-- Main insight: {one-sentence summary of the core thesis}
+```bash
+python scripts/run_state.py set --slug "{slug}" --path vault.status --value in_progress
 ```
 
-**If it does not exist:** Create it:
+Use `scripts/vault_sync.py` to prepare support files:
 
-```markdown
-# {YYYY-MM-DD}
-
-## Research
-- Added [[{Note-Title}]]
-- Main insight: {one-sentence summary of the core thesis}
+```bash
+python scripts/vault_sync.py export-run-support --slug "{slug}" --note-title "{note_title}" --project-slug "{project_slug}" --project-title "{project_title}" --main-insight "{main_insight}"
 ```
 
-### Step 9 — Confirm and ask before writing
+Write:
 
-**Important:** Before writing any files to The Vault, show the user:
-1. The research note content (or a summary)
-2. The list of assets to copy
-3. The daily note update
+- the research note to `{vault_path}/research/{note_title}.md`
+- source assets to `{vault_path}/research/assets/{source_type}/{slug}/`
+- optional project mirror to `{vault_path}/projects/{project_slug}/`
+- the daily-note update to `{vault_path}/daily-notes/{YYYY-MM-DD}.md`
 
-Ask for explicit confirmation before proceeding.
+### Step 7 - Persist completion in state
 
-### Step 10 — Report completion
+After a successful write:
 
+```bash
+python scripts/run_state.py set --slug "{slug}" --path vault.note_path --value "{vault_path}/research/{note_title}.md"
+python scripts/run_state.py set --slug "{slug}" --path vault.status --value done
+python scripts/run_state.py refresh-next --slug "{slug}"
 ```
+
+If the write fails:
+
+- set `vault.status = failed`
+- do not claim completion
+
+### Step 8 - Report completion
+
+```text
 SAVE-TO-VAULT COMPLETE
-Research note: {vault_path}/research/{Note-Title}.md
-Assets copied: {list of files}
+Slug: {slug}
+Research note: {vault_path}/research/{note_title}.md
+Asset bundle: {vault_path}/research/assets/{source_type}/{slug}/
+Project mirror: {vault_path}/projects/{project_slug}/
 Daily note updated: {vault_path}/daily-notes/{YYYY-MM-DD}.md
-
-Open Obsidian to verify [[wiki-links]] and graph view.
-
-Optional cleanup:
-- sources/{slug}/   (raw source material)
-- workspace/{slug}/ (learning package drafts)
-Shall I clean these up?
+Next recommended step: {next_recommended_step}
 ```
 
-## Common Issues
+## Quality Rules
 
-| Problem | Fix |
-|---------|-----|
-| Vault not found | Verify `vault_path` in `.claude/settings.json` |
-| research/ folder missing | Create it: `mkdir -p "{vault_path}/research/assets/"` |
-| Daily note format mismatch | Re-read The Vault's CLAUDE.md for current conventions |
-| Wiki-links not resolving in Obsidian | Ensure `[[Note-Title]]` matches the exact filename without `.md` |
+- never write to the Vault without confirmation
+- keep the research note readable and synthesis-first
+- keep raw files inside source bundles, not flat in `research/assets/`
+- prefer concept-first titles over source clickbait
+- include web validation when it materially improves trust
+- if a rebuild exists, mirror the readable files into `projects/`

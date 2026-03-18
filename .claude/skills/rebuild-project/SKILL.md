@@ -1,131 +1,150 @@
 ---
 name: rebuild-project
-description: Take a tutorial or project-based source that was already analyzed by learn-source and create a minimal, testable MVP project rebuild. Use when the user says "baue nach", "rebuild", "erstelle das Projekt", or wants to create working code from a tutorial or project source.
+description: Take a tutorial or project-based source that was already analyzed by learn-source and create a minimal, testable MVP project rebuild. Uses `run.json` to validate preconditions, track rebuild progress, and persist the resulting project path.
 ---
 
 # Rebuild Project
 
-Takes an already-analyzed source (from `learn-source`) and reconstructs the smallest meaningful end-to-end project. Produces runnable code, not just documentation.
+`rebuild-project` turns a rebuildable learning package into a real MVP in `projects/{slug}/`.
+This is not a documentation-only step.
 
 ## Prerequisites
 
-- A completed learning package in `workspace/{slug}/` (created by `learn-source`)
-- At least `00_zusammenfassung.md` and `02_schritt_fuer_schritt.md` must exist
+- `sources/{slug}/run.json` exists
+- `workspace/{slug}/` exists
+- `workspace.status` is effectively complete
 
-## Inputs (ask user if missing)
+## Inputs
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `slug` | required | The slug of the learning package in `workspace/` |
-| `target_lang` | auto-derived | Programming language if not obvious from the source |
-| `scope` | `mvp` | `mvp` (minimal viable) or `full` (closer to original) |
+| `slug` | required | The slug of the learning package |
+| `target_lang` | auto-derived | Programming language if not obvious |
+| `scope` | `mvp` | `mvp` or `full` |
 
 ## Execution Steps
 
-### Step 1 — Verify prerequisites
+### Step 1 - Validate state and workspace
 
-Check that `workspace/{slug}/` exists with at least `00_zusammenfassung.md` and `02_schritt_fuer_schritt.md`. If not, tell the user to run `learn-source` first.
+Before doing any rebuild work:
 
-### Step 2 — Read all available material
-
-Read in order:
-1. `workspace/{slug}/00_zusammenfassung.md` — what the source is about
-2. `workspace/{slug}/01_kernkonzepte.md` — core concepts and patterns
-3. `workspace/{slug}/02_schritt_fuer_schritt.md` — step-by-step breakdown
-4. Original source from `sources/{slug}/` — transcript, content, or text
-5. NLM analysis from `sources/{slug}/nlm-*` — if available
-
-### Step 3 — Design MVP architecture
-
-Based on the material, determine:
-
-1. **Business goal** — what the project does, in 1 sentence
-2. **Success metric** — how to verify it works, in 1 sentence
-3. **Technology stack** — language, framework, dependencies
-4. **Minimal increment** — the smallest set of features for a working demo
-5. **What to skip** — features that are not essential for the MVP
-
-### Step 4 — Create project
-
-Build the project in `projects/{slug}/`:
-
-- Generate all necessary code files
-- Create a `README.md` with:
-  - What this is and where it came from
-  - How to install dependencies
-  - How to run it
-  - What was simplified vs. the original
-  - Link back to `workspace/{slug}/` for the full learning package
-- **Every rebuild MUST include a `tests/` directory with at least 3 functional tests** (Pytest for Python, Jest for JS/TS). Tests should cover the core success metric, one happy path, and one edge case.
-- Keep it minimal and runnable
-- MVP first — no over-engineering
-
-### Step 5 — Update learning package
-
-Write or update `workspace/{slug}/04_projekt_rebuild.md` with:
-
-```markdown
-# Projekt-Rebuild: {topic}
-
-## Ziel
-{Business goal in 1 sentence}
-
-## Success Metric
-{How to verify it works}
-
-## Annahmen
-{List of assumptions made during rebuild}
-
-## Architektur
-{Technology stack and high-level design as text}
-
-## Dateistruktur
-{Tree view of projects/{slug}/}
-
-## Umsetzungsreihenfolge
-{Numbered steps taken to build the MVP}
-
-## Testfälle
-{How to verify the project works}
-
-## Failure Path
-{What could go wrong and how to debug}
-
-## Nächster Sprint
-{3 items for extending the MVP}
-
-## Fehlende Information
-{Anything that was unclear or had to be guessed — marked as "Zu verifizieren"}
+```bash
+python scripts/run_state.py validate --slug "{slug}" --check-files
+python scripts/run_state.py refresh-next --slug "{slug}"
+python scripts/run_state.py summary --slug "{slug}"
 ```
 
-### Step 6 — Report completion
+If the workspace is incomplete, stop and fix `learn-source` first.
 
+### Step 2 - Decide whether rebuild is applicable
+
+Check whether the source is actually technical and rebuildable.
+
+If it is not suitable for rebuild:
+
+```bash
+python scripts/run_state.py set --slug "{slug}" --path rebuild.status --value skipped
+python scripts/run_state.py set --slug "{slug}" --path rebuild.reason --value not_applicable
+python scripts/run_state.py refresh-next --slug "{slug}"
 ```
+
+Then report that rebuild was explicitly skipped.
+
+### Step 3 - Mark rebuild in progress
+
+If rebuild is applicable:
+
+```bash
+python scripts/run_state.py set --slug "{slug}" --path rebuild.status --value in_progress
+python scripts/run_state.py set --slug "{slug}" --path next_recommended_step --value rebuild-project
+```
+
+### Step 4 - Read the source package
+
+Read in this order:
+
+1. `workspace/{slug}/00_zusammenfassung.md`
+2. `workspace/{slug}/01_kernkonzepte.md`
+3. `workspace/{slug}/02_schritt_fuer_schritt.md`
+4. `workspace/{slug}/04_projekt_rebuild.md`
+5. original source material in `sources/{slug}/`
+6. available NotebookLM outputs in `sources/{slug}/nlm-*`
+
+Use `rtk read` when useful for local reading.
+
+### Step 5 - Design the MVP
+
+Determine:
+
+1. business goal
+2. success metric
+3. stack
+4. minimum viable scope
+5. what will be intentionally skipped
+
+Mark assumptions explicitly as `Annahme`.
+Mark unclear source gaps as `Zu verifizieren`.
+
+### Step 6 - Build the project
+
+Create `projects/{slug}/` with:
+
+- runnable code
+- a `README.md`
+- a `tests/` directory
+- at least 3 functional tests
+
+The rebuild must be minimal but real.
+
+### Step 7 - Update the learning package
+
+Update `workspace/{slug}/04_projekt_rebuild.md` so it points to the real rebuild result, not just a speculative blueprint.
+
+It should include:
+
+- goal
+- success metric
+- assumptions
+- architecture
+- file structure
+- implementation order
+- tests
+- failure path
+- next sprint
+- missing information
+
+### Step 8 - Persist rebuild result in state
+
+After a successful rebuild:
+
+```bash
+python scripts/run_state.py set --slug "{slug}" --path rebuild.project_path --value "projects/{slug}"
+python scripts/run_state.py set --slug "{slug}" --path rebuild.status --value done
+python scripts/run_state.py refresh-next --slug "{slug}"
+python scripts/run_state.py validate --slug "{slug}" --check-files
+```
+
+If the rebuild fails partway through:
+
+- use `rebuild.status = failed`
+- record the reason in `rebuild.reason`
+- do not claim completion
+
+### Step 9 - Report completion
+
+```text
 REBUILD-PROJECT COMPLETE
+Slug: {slug}
 Project: projects/{slug}/
-Files created: {list}
 Tech stack: {stack}
-MVP scope: {what's included}
-
-To run: {instructions}
-To extend: see workspace/{slug}/04_projekt_rebuild.md
-
-Next step:
-- /save-to-vault {slug}  (to export learnings to The Vault)
+Scope: {scope}
+Next recommended step: {next_recommended_step}
 ```
 
 ## Quality Rules
 
-- **MVP first** — the smallest testable end-to-end system
-- **No invented APIs or features** — only use what the source describes
-- **Mark assumptions** explicitly as `Annahme`
-- **Mark missing information** as `Fehlende Information` or `Zu verifizieren`
-- **Erst verstehen, dann bauen** — understand before building
-
-## Common Issues
-
-| Problem | Fix |
-|---------|-----|
-| Source not technical enough | Tell user this source is not suitable for rebuild |
-| Missing dependency info | Mark as assumption, suggest most common default |
-| Incomplete tutorial steps | Note gaps, build what's possible, document missing pieces |
+- MVP first
+- real code, not just notes
+- tests are required
+- keep `run.json` synchronized with the actual result
+- skip explicitly when rebuild does not apply
